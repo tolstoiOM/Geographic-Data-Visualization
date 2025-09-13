@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Wohngebiet Beispiel",
+        "typ": "Wohngebiet"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [16.3700, 48.2100],
+            [16.3720, 48.2100],
+            [16.3720, 48.2120],
+            [16.3700, 48.2120],
+            [16.3700, 48.2100]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Parkgebiet Beispiel",
+        "typ": "Parkgebiet"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [16.3740, 48.2105],
+            [16.3760, 48.2105],
+            [16.3760, 48.2125],
+            [16.3740, 48.2125],
+            [16.3740, 48.2105]
+          ]
+        ]
+      }
+    }
+  ]
+}
