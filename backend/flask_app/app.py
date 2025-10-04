@@ -23,4 +23,4 @@ def upload_geojson():
     return jsonify({'message': 'GeoJSON empfangen!', 'data': geojson_data})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)

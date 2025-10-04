@@ -5,20 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenStreetMap – Leaflet Starter</title>
     <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+    <link rel="stylesheet" href="style.css"/>
   </head>
   <body>
     <div id="map"></div>
+
     <div class="toolbar">
       <button id="locate">📍 Standort</button>
       <input id="search" type="text" placeholder="Ort suchen (z.B. Stephansdom)" />
       <button id="go">Suche</button>
       <input id="geojson-upload" type="file" accept="application/geo+json,application/json" style="min-width:unset;" />
     </div>
+
     <div class="credit">Karten-Daten © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>-Mitwirkende</div>
+
+    <div id="spinner" style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000;">
+        <div class="loader"></div>
+    </div>
+
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

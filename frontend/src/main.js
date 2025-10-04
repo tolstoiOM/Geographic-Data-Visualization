@@ -1,4 +1,4 @@
-// main.js für die Leaflet-Karte und Funktionen
+// Initialisierung der Leaflet-Karte
 console.log('main.js loaded');
 const START_COORDS = [48.2082, 16.3738];
 const START_ZOOM = 13;
@@ -9,6 +9,8 @@ const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 const marker = L.marker(START_COORDS).addTo(map);
 marker.bindPopup('<b>Wien</b><br>Willkommen auf deiner OSM-Karte.');
+
+// GEO-Lokalisierung
 const locateBtn = document.getElementById('locate');
 locateBtn.addEventListener('click', () => {
   if (!navigator.geolocation) {
@@ -31,6 +33,8 @@ locateBtn.addEventListener('click', () => {
 });
 const searchInput = document.getElementById('search');
 const goBtn = document.getElementById('go');
+
+// Suche (GEO-Coding)
 async function geocode(q) {
   const url = new URL('https://nominatim.openstreetmap.org/search');
   url.searchParams.set('q', q);
@@ -58,12 +62,14 @@ async function handleSearch() {
 }
 goBtn.addEventListener('click', handleSearch);
 searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSearch(); });
+
+// Tastatursteuerung (Zoom)
 document.addEventListener('keydown', (e) => {
   if (e.key === '+') map.zoomIn();
   if (e.key === '-') map.zoomOut();
 });
 
-// Styling and popup helpers are placed in outer scope so they can be reused
+// Stil- und Popup-Funktionen für GeoJSON
 function styleByProps(feature, schwarz = false) {
   const props = feature.properties || {};
   const layerName = (props.LAYER || '').toLowerCase();
@@ -93,6 +99,19 @@ function popupContent(props) {
   if (props.FMZK_ID) lines.push('<small>FMZK_ID: ' + props.FMZK_ID + '</small>');
   return lines.join('<br/>');
 }
+
+// Spinner-Funktionen
+const spinner = document.getElementById('spinner');
+
+function showSpinner() {
+  spinner.style.display = 'block';
+}
+
+function hideSpinner() {
+  spinner.style.display = 'none';
+}
+
+// Hochladen und Anzeigen von GeoJSON
 const geojsonUpload = document.getElementById('geojson-upload');
 // Keep a reference to the last added geojson layer so we can remove it on new uploads
 let currentGeoJsonLayer = null;
@@ -103,6 +122,9 @@ geojsonUpload.addEventListener('change', function(e) {
     console.warn('No file selected or file API not available');
     return;
   }
+
+  showSpinner(); // Spinner starten
+
   const reader = new FileReader();
   reader.onload = function(evt) {
     try {
@@ -149,8 +171,8 @@ geojsonUpload.addEventListener('change', function(e) {
   };
   reader.readAsText(file);
 
-  // After rendering locally, also send file to backend for storage
-  // Use fetch with FormData to POST multipart/form-data
+// After rendering locally, also send file to backend for storage
+// Use fetch with FormData to POST multipart/form-data
   (async () => {
     try {
       console.log('Starting upload to backend for file', file.name, file.size);
@@ -172,8 +194,53 @@ geojsonUpload.addEventListener('change', function(e) {
     } catch (err) {
       console.error('Upload error', err);
       alert('Fehler beim Upload: ' + err.message);
+    } finally {
+      hideSpinner(); // Spinner immer ausblenden, sobald Upload abgeschlossen oder fehlgeschlagen
     }
   })();
 });
+
+// Draw-Toolbar auf der Karte aktivieren
+// Layer zum Speichern der gezeichneten Objekte
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+// Draw-Toolbar hinzufügen
+const drawControl = new L.Control.Draw({
+  draw: {
+    polygon: true,   // Polygon zeichnen
+    rectangle: true, // Rechteck zeichnen
+    circle: false,
+    marker: false,
+    polyline: false,
+    circlemarker: false
+  },
+  edit: {
+    featureGroup: drawnItems
+  }
+});
+map.addControl(drawControl);
+
+// Ereignis abfangen, wenn ein Objekt gezeichnet wurde
+map.on(L.Draw.Event.CREATED, function (event) {
+  const layer = event.layer;
+  drawnItems.addLayer(layer);
+
+  // GeoJSON der gezeichneten Form exportieren
+  const geojson = layer.toGeoJSON();
+  console.log('GeoJSON:', geojson);
+
+  // Optional: direkt als Datei herunterladen
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(geojson));
+  const dlAnchor = document.createElement('a');
+  dlAnchor.setAttribute("href", dataStr);
+  dlAnchor.setAttribute("download", "export.geojson");
+  document.body.appendChild(dlAnchor);
+  dlAnchor.click();
+  dlAnchor.remove();
+});
+
+
+
 
 // Note: uploaded GeoJSON is rendered in Schwarzplan (black) style by default.
