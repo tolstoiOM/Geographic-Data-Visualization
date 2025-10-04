@@ -1,4 +1,5 @@
 // main.js für die Leaflet-Karte und Funktionen
+console.log('main.js loaded');
 const START_COORDS = [48.2082, 16.3738];
 const START_ZOOM = 13;
 const map = L.map('map').setView(START_COORDS, START_ZOOM);
@@ -96,8 +97,12 @@ const geojsonUpload = document.getElementById('geojson-upload');
 // Keep a reference to the last added geojson layer so we can remove it on new uploads
 let currentGeoJsonLayer = null;
 geojsonUpload.addEventListener('change', function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+  console.log('geojson-upload change event fired', e);
+  const file = e.target && e.target.files ? e.target.files[0] : null;
+  if (!file) {
+    console.warn('No file selected or file API not available');
+    return;
+  }
   const reader = new FileReader();
   reader.onload = function(evt) {
     try {
@@ -143,6 +148,32 @@ geojsonUpload.addEventListener('change', function(e) {
     }
   };
   reader.readAsText(file);
+
+  // After rendering locally, also send file to backend for storage
+  // Use fetch with FormData to POST multipart/form-data
+  (async () => {
+    try {
+      console.log('Starting upload to backend for file', file.name, file.size);
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const res = await fetch('http://localhost:8000/upload-geojson', {
+        method: 'POST',
+        body: form,
+      });
+      console.log('Upload request completed', res.status);
+      const data = await res.json();
+      if (!res.ok) {
+        console.error('Upload failed', data);
+        alert('Upload fehlgeschlagen: ' + (data.detail || JSON.stringify(data)));
+      } else {
+        console.log('Upload response', data);
+        alert('Upload erfolgreich: ' + JSON.stringify(data));
+      }
+    } catch (err) {
+      console.error('Upload error', err);
+      alert('Fehler beim Upload: ' + err.message);
+    }
+  })();
 });
 
 // Note: uploaded GeoJSON is rendered in Schwarzplan (black) style by default.

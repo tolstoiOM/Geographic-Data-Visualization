@@ -37,7 +37,7 @@ services:
       dockerfile: Dockerfile
     container_name: backend_flask
     ports:
-      - "5000:5000"
+      - "5001:5000"
     volumes:
       - ./backend/flask_app:/app
     environment:
@@ -57,6 +57,7 @@ services:
       - ./backend/fastapi_app:/app
     environment:
       - DATABASE_URL=postgresql://sepjuser:sepjpw@database:5432/sepjdb
+      - MAX_UPLOAD_MB=1024
     depends_on:
       - database
 
