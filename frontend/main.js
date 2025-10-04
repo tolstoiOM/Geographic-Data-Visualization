@@ -61,7 +61,40 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '+') map.zoomIn();
   if (e.key === '-') map.zoomOut();
 });
+
+// Styling and popup helpers are placed in outer scope so they can be reused
+function styleByProps(feature, schwarz = false) {
+  const props = feature.properties || {};
+  const layerName = (props.LAYER || '').toLowerCase();
+  if (schwarz) {
+    return { color: '#000000', fillColor: '#000000', fillOpacity: 0.85, weight: 1 };
+  }
+  if (layerName.includes('geb')) return { color: '#8B0000', fillColor: '#8B0000', fillOpacity: 0.6 };
+  if (layerName.includes('überbauung') || layerName.includes('bau')) return { color: '#1f77b4', fillColor: '#1f77b4', fillOpacity: 0.4 };
+  if (layerName.includes('flugdach')) return { color: '#ff7f0e', fillColor: '#ff7f0e', fillOpacity: 0.5 };
+  if (layerName.includes('grün') || layerName.includes('park')) return { color: 'green', fillColor: 'green', fillOpacity: 0.4 };
+  const klasse = props.F_KLASSE;
+  if (typeof klasse === 'number') {
+    if (klasse >= 13) return { color: '#6a3d9a', fillColor: '#6a3d9a', fillOpacity: 0.5 };
+    if (klasse >= 11) return { color: '#b15928', fillColor: '#b15928', fillOpacity: 0.5 };
+  }
+  return { color: 'gray', fillOpacity: 0.3 };
+}
+
+function popupContent(props) {
+  if (!props) return '';
+  const lines = [];
+  if (props.BEZUG) lines.push('<b>Bezug:</b> ' + props.BEZUG);
+  if (props.LAYER) lines.push('<b>Layer:</b> ' + props.LAYER);
+  if (props.F_KLASSE !== undefined) lines.push('<b>F_KLASSE:</b> ' + props.F_KLASSE);
+  if (props.RN_NUTZUNG_LEVEL2) lines.push('<b>Nutzung:</b> ' + props.RN_NUTZUNG_LEVEL2);
+  if (props.RN_FLAECHE) lines.push('<b>Fläche:</b> ' + props.RN_FLAECHE.toFixed(1) + ' m²');
+  if (props.FMZK_ID) lines.push('<small>FMZK_ID: ' + props.FMZK_ID + '</small>');
+  return lines.join('<br/>');
+}
 const geojsonUpload = document.getElementById('geojson-upload');
+// Keep a reference to the last added geojson layer so we can remove it on new uploads
+let currentGeoJsonLayer = null;
 geojsonUpload.addEventListener('change', function(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -69,26 +102,47 @@ geojsonUpload.addEventListener('change', function(e) {
   reader.onload = function(evt) {
     try {
       const geojson = JSON.parse(evt.target.result);
-      const layer = L.geoJSON(geojson, {
-        style: function(feature) {
-          if (feature.properties && feature.properties.typ === 'Wohngebiet') {
-            return { color: 'blue', fillColor: 'blue', fillOpacity: 0.5 };
-          }
-          if (feature.properties && feature.properties.typ === 'Parkgebiet') {
-            return { color: 'green', fillColor: 'green', fillOpacity: 0.5 };
-          }
-          return { color: 'gray', fillOpacity: 0.3 };
+      // Basic validation
+      if (!geojson.type || (geojson.type !== 'FeatureCollection' && geojson.type !== 'Feature')) {
+        throw new Error('Nicht unterstützter GeoJSON-Typ');
+      }
+
+      // Remove previous layer if present
+      if (currentGeoJsonLayer) {
+        map.removeLayer(currentGeoJsonLayer);
+        currentGeoJsonLayer = null;
+      }
+
+      // Use schwarz (black) style by default for uploaded GeoJSON (Schwarzplan)
+      currentGeoJsonLayer = L.geoJSON(geojson, {
+        style: function(f) { return styleByProps(f, true); },
+        onEachFeature: function(feature, layer) {
+          const content = popupContent(feature.properties);
+          if (content) layer.bindPopup(content);
         },
-        onEachFeature: function (feature, layer) {
-          if (feature.properties && feature.properties.name) {
-            layer.bindPopup(feature.properties.name);
-          }
+        pointToLayer: function(feature, latlng) {
+          return L.circleMarker(latlng, { radius: 6, fillOpacity: 0.8 });
         }
       }).addTo(map);
-      map.fitBounds(layer.getBounds());
+
+      // fit map to the geojson bounds if possible
+      try {
+        const bounds = currentGeoJsonLayer.getBounds();
+        if (bounds.isValid && bounds.isValid()) {
+          map.fitBounds(bounds);
+        } else {
+          map.setView(START_COORDS, START_ZOOM);
+        }
+      } catch (e) {
+        // fallback
+        map.setView(START_COORDS, START_ZOOM);
+      }
     } catch (err) {
-      alert('Ungültige GeoJSON-Datei!');
+      console.error(err);
+      alert('Ungültige GeoJSON-Datei: ' + (err.message || err));
     }
   };
   reader.readAsText(file);
 });
+
+// Note: uploaded GeoJSON is rendered in Schwarzplan (black) style by default.
