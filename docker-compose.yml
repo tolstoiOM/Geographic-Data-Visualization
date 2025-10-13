@@ -18,13 +18,19 @@ services:
   # --------- Node.js Frontend (mit Leaflet) ---------
   frontend:
     build:
-      context: ./frontend
+      context: ./frontend/geographic-data-visualization
       dockerfile: Dockerfile
     container_name: frontend
     ports:
       - "3000:5173"  # Host 3000 → Container 5173
     volumes:
-      - ./frontend:/app
+      - ./frontend/geographic-data-visualization:/app
+      - /app/node_modules 
+    environment:
+      - VITE_API_URL=http://backend_fastapi:8000
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    command: npm run dev
     depends_on:
       - backend_flask
       - backend_fastapi

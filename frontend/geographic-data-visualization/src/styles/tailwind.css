@@ -1,0 +1,8 @@
+@import "tailwindcss/preflight";  /* replaces @tailwind base */
+@import "tailwindcss/utilities";  /* replaces both @tailwind components + utilities */
+
+/* eigene Anpassungen */
+#map {
+  height: 100vh;
+  width: 100%;
+}
