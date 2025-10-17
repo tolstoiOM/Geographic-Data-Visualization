@@ -5,6 +5,9 @@ import 'leaflet-draw'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import osmtogeojson from "osmtogeojson"
+import 'leaflet-spin'
+import {Spinner} from 'spin.js'
+import 'spin.js/spin.css'
 
 // Refs
 const mapContainer = ref(null)
@@ -14,6 +17,7 @@ const START_COORDS = [48.2082, 16.3738];
 const START_ZOOM = 13;
 let map = null
 let geoJsonLayer = null
+let spinner
 
 // 📍 Karte initialisieren
 onMounted(() => {
@@ -49,23 +53,23 @@ onMounted(() => {
   const marker = L.marker(START_COORDS).addTo(map);
   marker.bindPopup('<b>Wien</b><br>Willkommen auf deiner OSM-Karte.');
 
-// Draw-Toolbar auf der Karte aktivieren
-const drawnItems = new L.FeatureGroup()
-map.addLayer(drawnItems)
-const drawControl = new L.Control.Draw({
-  draw: {
-    polygon: true,
-    rectangle: true,
-    circle: true,
-    marker: true,
-    polyline: true,
-    circlemarker: true
-  },
-  edit: {
-    featureGroup: drawnItems
-  }
-})
-map.addControl(drawControl)
+  // Draw-Toolbar auf der Karte aktivieren
+  const drawnItems = new L.FeatureGroup()
+  map.addLayer(drawnItems)
+  const drawControl = new L.Control.Draw({
+    draw: {
+      polygon: true,
+      rectangle: true,
+      circle: true,
+      marker: true,
+      polyline: true,
+      circlemarker: true
+    },
+    edit: {
+      featureGroup: drawnItems
+    }
+  })
+  map.addControl(drawControl)
 
 // Beim Zeichnen: GeoJSON exportieren
 map.on(L.Draw.Event.CREATED, async function (event) {
@@ -92,13 +96,34 @@ map.on(L.Draw.Event.CREATED, async function (event) {
     console.log('Export abgebrochen. GeoJSON:', geojson)
   }
 })
+
+  spinner = new Spinner({
+    lines: 12,
+    length: 38,
+    width: 10,
+    radius: 45,
+    scale: 4,
+    corners: 1,
+    speed: 1,
+    rotate: 0,
+    animation: 'spinner-line-shrink',
+    direction: 1,
+    color: '#2563eb',
+    fadeColor: 'transparent',
+    top: '50%',
+    left: '50%',
+    shadow: '0 0 1px transparent',
+    zIndex: 9999,
+    className: 'spinner',
+    position: 'absolute',
+  });
 })
 
 // 🔍 Ortssuche über Nominatim (OpenStreetMap)
 let searchMarker = null
 async function handleSearch() {
   if (!query.value) return
-  loading.value = true
+  spinner.spin(mapContainer.value); // Spinner starten
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query.value)}`)
     const data = await res.json()
@@ -118,7 +143,7 @@ async function handleSearch() {
   } catch (err) {
     console.error('Fehler bei der Suche:', err)
   } finally {
-    loading.value = false
+    spinner.stop();
   }
 }
 
@@ -126,7 +151,8 @@ async function handleSearch() {
 function handleUpload(event) {
   const file = event.target.files[0]
   if (!file) return
-  loading.value = true
+  spinner.spin(mapContainer.value); // Spinner starten
+
   const reader = new FileReader()
   reader.onload = (e) => {
     try {
@@ -142,7 +168,7 @@ function handleUpload(event) {
       console.error('Fehler beim Lesen der Datei:', err)
       alert('Ungültige GeoJSON-Datei.')
     } finally {
-      loading.value = false
+      spinner.stop();
     }
   }
   reader.readAsText(file)
@@ -150,21 +176,21 @@ function handleUpload(event) {
 
 // 📍 Benutzer-Standort
 function handleLocate() {
-  loading.value = true
+  spinner.spin(mapContainer.value); // Spinner starten
   map.locate({ setView: true, maxZoom: 16 })
   map.on('locationfound', (e) => {
     L.marker(e.latlng).addTo(map).bindPopup('📍 Du bist hier').openPopup()
-    loading.value = false
+    spinner.stop();
   })
   map.on('locationerror', () => {
     alert('Standort konnte nicht ermittelt werden.')
-    loading.value = false
+    spinner.stop();
   })
 }
 
 async function exportGeoJSON(layer_geojson) {
   try {
-    loading.value = true
+    spinner.spin(mapContainer.value); // Spinner starten
 
     const coords = layer_geojson.geometry.coordinates[0]; // Array von [lng, lat] Paaren
     const polyString = coords.map(ll => `${ll[1]} ${ll[0]}`).join(' '); // Beachte: lat lng Reihenfolge für Overpass
@@ -191,7 +217,7 @@ async function exportGeoJSON(layer_geojson) {
     console.error("Fehler beim Abrufen von OSM-Daten:", err)
     alert("OSM-Daten konnten nicht geladen werden.")
   } finally {
-    loading.value = false
+    spinner.stop();
   }
 }
 
@@ -209,64 +235,67 @@ function downloadGeoJSON(geojson, filename) {
 <template>
   <div class="relative w-full h-screen">
     <!-- Leaflet Karte -->
-    <div ref="mapContainer" class="w-full h-full"></div>
+    <div ref="mapContainer" class="w-full h-full">
 
-    <!-- Toolbar oben links -->
-    <div class="absolute top-4 left-4 z-[1000] flex flex-col gap-2 bg-white/90 backdrop-blur-md p-3 rounded-lg shadow-md w-60">
+    <!-- Toolbar unten links -->
+    <div class="toolbar">
       <button
         @click="handleLocate"
-        class="bg-blue-600 text-white rounded px-2 py-1 hover:bg-blue-700 transition"
+        class="bg-blue-600 text-white rounded px-3 py-2 hover:bg-blue-700 transition font-semibold"
       >
         📍 Standort
       </button>
-      <div class="relative">
+
+      <!-- Suche -->
+      <div class="flex items-center gap-1">
         <input
           v-model="query"
           type="text"
-          placeholder="Ort suchen (z.B. Stephansdom)"
-          class="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+          placeholder=" Ort suchen"
+          class="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 search-input"
           @keyup.enter="handleSearch"
         />
-        <button
-          @click="handleSearch"
-          class="absolute right-1 top-1 bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 transition"
-        >
-          Suche
-        </button>
       </div>
+
+      <!-- Upload -->
         <label
-          class="block bg-gray-100 border border-gray-300 rounded px-2 py-1 text-center cursor-pointer hover:bg-gray-200 transition"
+          class="bg-green-600 text-white px-3 py-2 rounded cursor-pointer hover:bg-green-700 transition font-semibold"
         >
           Upload
           <input
             type="file"
-            accept="application/geo+json,application/json"
+            accept=".geojson,.json,application/geo+json,application/json"
             @change="handleUpload"
             class="hidden"
           />
         </label>
       </div>
-
-    <!-- Spinner -->
-    <div
-      v-if="loading"
-      class="fixed top-0 left-0 w-full h-full bg-white/60 flex items-center justify-center z-[2000]"
-    >
-      <div class="loader border-8 border-gray-200 border-t-blue-500 rounded-full w-12 h-12 animate-spin"></div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.custom-credit {
-  background: white;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #333;
+.absolute div {
+  font-family: Arial, sans-serif;
+  font-size: 14px;
 }
-.map-container {
-  width: 100%;
-  height: 100%;
+.toolbar {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 1000;
+  display: flex;
+  gap: 0.5rem;
+  background: white;
+  box-shadow: 0 0 10px rgba(0,0,0,0.2);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  align-items: center;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+}
+.search-input {
+  width: 150px;
+  max-width: 50vw;
 }
 </style>
