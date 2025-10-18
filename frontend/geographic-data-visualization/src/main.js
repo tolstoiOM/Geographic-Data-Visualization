@@ -1,4 +1,5 @@
 import './styles/tailwind.css'
+import 'leaflet-draw/dist/leaflet.draw.css'
 import router from './router';
 
 import { createApp } from 'vue'
