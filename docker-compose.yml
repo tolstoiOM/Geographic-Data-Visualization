@@ -24,10 +24,11 @@ services:
     ports:
       - "3000:5173"  # Host 3000 → Container 5173
     volumes:
-      - ./frontend/geographic-data-visualization:/app
+      - ./frontend/geographic-data-visualization:/app:cached
+      - ./frontend/geographic-data-visualization/.env:/app/.env:cached
       - /app/node_modules 
     environment:
-      - VITE_API_URL=http://backend_fastapi:8000
+      #- VITE_API_URL=http://backend_fastapi:8000
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
     command: npm run dev

@@ -11,7 +11,6 @@ import 'spin.js/spin.css'
 
 // Refs
 const mapContainer = ref(null)
-const loading = ref(false) // für Spinner
 const query = ref('')
 const START_COORDS = [48.2082, 16.3738];
 const START_ZOOM = 13;
@@ -148,13 +147,13 @@ async function handleSearch() {
 }
 
 // 📂 Datei-Upload (GeoJSON anzeigen)
-function handleUpload(event) {
+async function handleUpload(event) {
   const file = event.target.files[0]
   if (!file) return
   spinner.spin(mapContainer.value); // Spinner starten
 
   const reader = new FileReader()
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const geojson = JSON.parse(e.target.result)
       if (!geojson.type || (geojson.type !== 'FeatureCollection' && geojson.type !== 'Feature')) {
@@ -164,6 +163,13 @@ function handleUpload(event) {
         style: { color: '#000000', fillColor: '#000000', fillOpacity: 0.7, weight: 1 }
       }).addTo(map)
       map.fitBounds(geoJsonLayer.getBounds())
+
+      // 🧠 Nutzer fragen, ob in DB speichern
+      if (window.confirm("Möchtest du diese GeoJSON-Daten in die Datenbank speichern?")) {
+        await saveGeoJSONToDB(geojson)
+        alert("GeoJSON-Daten wurden an das Backend gesendet.")
+      }
+
     } catch (err) {
       console.error('Fehler beim Lesen der Datei:', err)
       alert('Ungültige GeoJSON-Datei.')
@@ -172,6 +178,24 @@ function handleUpload(event) {
     }
   }
   reader.readAsText(file)
+}
+
+// GEOJSON-Fetch-Aufruf
+async function saveGeoJSONToDB(geojson) {
+  try {
+    const res = await fetch(`${import.meta.env.VITE_API_URL}/upload-geojson`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(geojson),
+    })
+    if (!res.ok) {
+      const msg = await res.text()
+      throw new Error(msg || "Fehler beim Speichern der Daten.")
+    }
+  } catch (err) {
+    console.error("Fehler beim Senden der GeoJSON-Daten:", err)
+    alert("Fehler beim Speichern in der Datenbank.")
+  }
 }
 
 // 📍 Benutzer-Standort
