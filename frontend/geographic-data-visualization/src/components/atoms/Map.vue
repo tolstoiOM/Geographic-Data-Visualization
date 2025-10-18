@@ -55,10 +55,53 @@ onMounted(() => {
   // Draw-Toolbar auf der Karte aktivieren
   const drawnItems = new L.FeatureGroup()
   map.addLayer(drawnItems)
+
+  // Fix: override L.GeometryUtil.readableArea to avoid ReferenceError in some leaflet-draw builds
+  // (some distributed builds assign to an undeclared `type` variable which throws in strict mode).
+  try {
+    if (L && L.GeometryUtil && typeof L.GeometryUtil.readableArea === 'function') {
+      const PREC = { km: 2, ha: 2, m: 0, mi: 2, ac: 2, yd: 0, ft: 0, nm: 2 }
+      const originalReadableArea = L.GeometryUtil.readableArea
+      L.GeometryUtil.readableArea = function(area, metric, opts) {
+        try {
+          if (metric) {
+            const typ = typeof metric
+            let units
+            if (typ === 'string') units = [metric]
+            else if (typ === 'boolean') units = ['ha', 'm']
+            else units = metric
+
+            if (area >= 1e6 && units.indexOf('km') !== -1) return L.GeometryUtil.formattedNumber(area * 1e-6, PREC.km) + ' km²'
+            if (area >= 1e4 && units.indexOf('ha') !== -1) return L.GeometryUtil.formattedNumber(area * 1e-4, PREC.ha) + ' ha'
+            return L.GeometryUtil.formattedNumber(area, PREC.m) + ' m²'
+          } else {
+            const a = area / 0.836127
+            if (a >= 3097600) return L.GeometryUtil.formattedNumber(a / 3097600, PREC.mi) + ' mi²'
+            if (a >= 4840) return L.GeometryUtil.formattedNumber(a / 4840, PREC.ac) + ' acres'
+            return L.GeometryUtil.formattedNumber(a, PREC.yd) + ' yd²'
+          }
+        } catch (err) {
+          // fallback to original if available
+          try { return originalReadableArea(area, metric, opts) } catch (e) { return '' }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not apply readableArea override:', err)
+  }
   const drawControl = new L.Control.Draw({
     draw: {
       polygon: true,
-      rectangle: true,
+      rectangle: {
+        shapeOptions: {
+          color: '#e11d48',
+          weight: 2,
+          fillColor: '#fca5a5',
+          fillOpacity: 0.25
+        },
+        showArea: true,
+        repeatMode: false
+      },
       circle: true,
       marker: true,
       polyline: true,
@@ -69,6 +112,39 @@ onMounted(() => {
     }
   })
   map.addControl(drawControl)
+
+  // --- Make the toolbar rectangle behave like "press-and-hold" ---
+  // Access the rectangle handler created by the drawControl (guarded)
+  try {
+    const drawToolbar = drawControl._toolbars && drawControl._toolbars.draw
+    const rectMode = drawToolbar && drawToolbar._modes && drawToolbar._modes.rectangle
+    const rectangleHandler = rectMode && rectMode.handler
+
+    // Query the DOM button that the Draw toolbar created for rectangle
+    const rectButton = document.querySelector('.leaflet-draw-draw-rectangle')
+
+    if (rectangleHandler && rectButton) {
+      // When user presses (mousedown) on the toolbar rectangle button, enable the handler
+      rectButton.addEventListener('mousedown', (ev) => {
+        ev.preventDefault()
+        // enable the draw handler so the next mousedown on the map will start drawing immediately
+        try {
+          rectangleHandler.enable()
+          // disable map dragging while interacting
+          if (map && map.dragging) map.dragging.disable()
+        } catch (e) {
+          console.warn('Could not enable rectangle handler:', e)
+        }
+      })
+
+      // Ensure map dragging is re-enabled when drawing finishes or is cancelled
+      map.on('draw:created draw:drawstop draw:drawcancel', () => {
+        if (map && map.dragging) map.dragging.enable()
+      })
+    }
+  } catch (err) {
+    console.warn('Error wiring press-and-hold rectangle:', err)
+  }
 
 // Beim Zeichnen: GeoJSON exportieren
 map.on(L.Draw.Event.CREATED, async function (event) {
@@ -321,5 +397,18 @@ function downloadGeoJSON(geojson, filename) {
 .search-input {
   width: 150px;
   max-width: 50vw;
+}
+
+/* Make drawn shapes visually distinct */
+.leaflet-container .leaflet-overlay-pane svg path.leaflet-interactive {
+  stroke-linejoin: round;
+}
+.leaflet-container .leaflet-overlay-pane svg path.leaflet-interactive[stroke] {
+  stroke: #e11d48 !important;
+  stroke-width: 2 !important;
+}
+.leaflet-container .leaflet-overlay-pane svg path.leaflet-interactive[fill] {
+  fill: #fca5a5 !important;
+  fill-opacity: 0.25 !important;
 }
 </style>
