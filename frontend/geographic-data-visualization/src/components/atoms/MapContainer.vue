@@ -120,7 +120,13 @@ onMounted(() => {
   // mount legend as a leaflet control
   const LegendControl = L.Control.extend({ options: { position: 'topright' }, onAdd: function() {
     const container = L.DomUtil.create('div', 'color-legend-control')
-    this._vueApp = createApp(ColorLegend)
+    // pass a callback so the legend can notify the map when selection changes
+    const app = createApp(ColorLegend, {
+      onSelectionChange: (selectedCategories) => {
+        try { applyLegendFilter(selectedCategories) } catch (e) { console.warn('Legend selection handler failed', e) }
+      }
+    })
+    this._vueApp = app
     this._vueApp.mount(container)
     return container
   }, onRemove: function() { if (this._vueApp) { try { this._vueApp.unmount() } catch(e){} this._vueApp = null } }
@@ -212,6 +218,8 @@ onMounted(() => {
           try { map.value.removeLayer(provided._geoJsonLayer) } catch (e) { /* ignore */ }
           provided._geoJsonLayer = null
         }
+        // store last raw geojson so legend filtering can reuse it
+        provided._lastGeoJSON = geojson
         provided._geoJsonLayer = L.geoJSON(geojson, {
           style: getStyleForFeature,
           pointToLayer: function(feature, latlng) {
@@ -240,6 +248,44 @@ onMounted(() => {
       } finally { spinner.hide() }
     }
     reader.readAsText(file)
+  }
+
+  // apply legend filter by rebuilding the geojson layer from provided._lastGeoJSON
+  function applyLegendFilter(selectedCategories) {
+    try {
+      // if no stored geojson, nothing to do
+      if (!provided._lastGeoJSON) return
+      // remove existing layer if present
+      if (provided._geoJsonLayer) {
+        try { map.value.removeLayer(provided._geoJsonLayer) } catch (e) { /* ignore */ }
+        provided._geoJsonLayer = null
+      }
+      // build filtered FeatureCollection
+      const filtered = { type: 'FeatureCollection', features: (provided._lastGeoJSON.features || []).filter(f => {
+        try {
+          const t = getFeatureType(f)
+          // show features where type is in selectedCategories OR when selected includes 'unknown' and type is unknown
+          return selectedCategories.includes(t) || (t === 'unknown' && selectedCategories.includes('unknown'))
+        } catch (e) { return false }
+      }) }
+      provided._geoJsonLayer = L.geoJSON(filtered, {
+        style: getStyleForFeature,
+        pointToLayer: function(feature, latlng) {
+          const s = getStyleForFeature(feature)
+          return L.circleMarker(latlng, { radius: 6, fillColor: s.fillColor, color: '#fff', weight: 1, fillOpacity: 1 })
+        },
+        onEachFeature: function(feature, layer) {
+          try {
+            const t = getFeatureType(feature)
+            const props = feature.properties || {}
+            const title = props.name || props.id || (props.type || t)
+            const html = `<div><strong>${title}</strong><div>Typ: ${t}</div></div>`
+            layer.bindPopup(html)
+          } catch (e) { /* ignore */ }
+        }
+      }).addTo(map.value)
+      try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { /* ignore */ }
+    } catch (err) { console.warn('applyLegendFilter failed', err) }
   }
 
   provided.saveGeoJSONToDB = async function(geojson) {
