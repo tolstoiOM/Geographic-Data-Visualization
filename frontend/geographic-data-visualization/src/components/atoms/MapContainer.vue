@@ -1,6 +1,8 @@
 <template>
   <div class="relative w-full h-screen">
-    <div ref="mapContainer" class="w-full h-full"></div>
+      <div ref="mapContainer" class="w-full h-full relative">
+  <SpinnerComp :visible="spinner.isVisible.value" />
+      </div>
     <!-- DrawControls does not render DOM into the map pane; keep it as a child so it can access mapRef -->
     <DrawControls />
     <!-- Toolbar is rendered outside the raw Leaflet map container to avoid DOM interference -->
@@ -13,8 +15,8 @@ import { onMounted, ref, provide } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import osmtogeojson from 'osmtogeojson'
-import { Spinner } from 'spin.js'
-import 'spin.js/spin.css'
+import SpinnerComp from './Spinner.vue'
+import { useSpinner } from '../../composables/useSpinner'
 import DrawControls from './DrawControls.vue'
 import MapToolbar from './MapToolbar.vue'
 import Credit from './Credit.vue'
@@ -24,7 +26,8 @@ const mapContainer = ref(null)
 const map = ref(null)
 const START_COORDS = [48.2082, 16.3738]
 const START_ZOOM = 13
-let spinner
+const spinner = useSpinner()
+let _locTimer = null
 
 
 // Expose map and helper functions to child components
@@ -65,11 +68,8 @@ onMounted(() => {
   map.value.addControl(new CreditControl())
 
   L.marker(START_COORDS).addTo(map.value).bindPopup('<b>Wien</b><br>Willkommen auf deiner OSM-Karte.')
+  // spinner is managed via the useSpinner() composable
 
-  spinner = new Spinner({
-    lines: 12, length: 38, width: 10, radius: 45, scale: 1.5,
-    color: '#2563eb', zIndex: 9999, className: 'spinner'
-  })
 
   // readableArea override to avoid leaflet-draw minified bug
   try {
@@ -106,7 +106,7 @@ onMounted(() => {
   // populate helper functions after map is available
   provided.handleSearch = async function(query) {
     if (!query) return
-    try { spinner.spin(mapContainer.value) } catch (e) {}
+    spinner.show()
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`)
       const data = await res.json()
@@ -132,13 +132,18 @@ onMounted(() => {
         }
       } else alert('Ort nicht gefunden.')
     } catch (err) { console.error('Fehler bei der Suche:', err) }
-    try { spinner.stop() } catch (e) {}
+    spinner.hide()
   }
 
   provided.handleUpload = async function(file) {
     if (!file) return
-    try { spinner.spin(mapContainer.value) } catch (e) {}
+    spinner.show()
     const reader = new FileReader()
+    reader.onerror = (e) => {
+      console.error('FileReader error', e)
+      alert('Fehler beim Lesen der Datei.')
+      try { spinner.hide() } catch (err) {}
+    }
     reader.onload = async (e) => {
       try {
         const geojson = JSON.parse(e.target.result)
@@ -164,7 +169,7 @@ onMounted(() => {
       } catch (err) {
         console.error('Fehler beim Lesen der Datei:', err)
         alert('Ungültige GeoJSON-Datei.')
-      } finally { try { spinner.stop() } catch (e) {} }
+      } finally { spinner.hide() }
     }
     reader.readAsText(file)
   }
@@ -179,20 +184,27 @@ onMounted(() => {
   }
 
   provided.handleLocate = function() {
-    try { spinner.spin(mapContainer.value) } catch (e) {}
+    // start locate and add a fallback timeout to stop locating if nothing happens
     map.value.locate({ setView: true, maxZoom: 16 })
+    if (_locTimer) clearTimeout(_locTimer)
+    _locTimer = setTimeout(() => {
+      try { map.value.stopLocate(); console.warn('Locate timed out, stopped location watch.') } catch (e) {}
+      _locTimer = null
+    }, 15000)
+
     map.value.once('locationfound', (e) => {
       const m = L.marker(e.latlng).addTo(map.value).bindPopup('📍 Du bist hier')
       try {
         map.value.once('moveend', () => { try { m.openPopup() } catch (e) { /* ignore */ } })
       } catch (err) { try { m.openPopup() } catch (e) { /* ignore */ } }
-      try { spinner.stop() } catch (e) {}
+      spinner.hide()
+      if (_locTimer) { clearTimeout(_locTimer); _locTimer = null }
     })
-    map.value.once('locationerror', () => { alert('Standort konnte nicht ermittelt werden.'); try { spinner.stop() } catch (e) {} })
+  map.value.once('locationerror', () => { alert('Standort konnte nicht ermittelt werden.'); try { spinner.hide() } catch (e) {} if (_locTimer) { clearTimeout(_locTimer); _locTimer = null } })
   }
 
   provided.exportGeoJSON = async function(layer_geojson) {
-    try { try { spinner.spin(mapContainer.value) } catch (e) {};
+    try { try { spinner.show() } catch (e) {};
       const coords = layer_geojson.geometry.coordinates[0]
       const polyString = coords.map(ll => `${ll[1]} ${ll[0]}`).join(' ')
       const overpassQuery = `\n        [out:json][timeout:25];\n        (\n          way(poly:"${polyString}");\n          node(poly:"${polyString}");\n        );\n        out body;\n      `
@@ -200,8 +212,8 @@ onMounted(() => {
       const data = await res.json()
       const geojson = osmtogeojson(data)
       return geojson
-    } catch (err) { console.error('Fehler beim Abrufen von OSM-Daten:', err); alert('OSM-Daten konnten nicht geladen werden.') }
-    finally { try { spinner.stop() } catch (e) {} }
+  } catch (err) { console.error('Fehler beim Abrufen von OSM-Daten:', err); alert('OSM-Daten konnten nicht geladen werden.') }
+  finally { try { spinner.hide() } catch (e) {} }
   }
 
   provided.downloadGeoJSON = function(geojson, filename) {
