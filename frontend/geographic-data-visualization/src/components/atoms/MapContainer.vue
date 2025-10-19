@@ -17,6 +17,8 @@ import { Spinner } from 'spin.js'
 import 'spin.js/spin.css'
 import DrawControls from './DrawControls.vue'
 import MapToolbar from './MapToolbar.vue'
+import Credit from './Credit.vue'
+import { createApp } from 'vue'
 
 const mapContainer = ref(null)
 const map = ref(null)
@@ -42,15 +44,24 @@ onMounted(() => {
     attribution: '© OpenStreetMap-Mitwirkende'
   }).addTo(map.value)
 
-  // small credit control
+  // small credit control using a Vue component mounted into the control
   const CreditControl = L.Control.extend({
     options: { position: 'bottomright' },
     onAdd: function () {
-      const div = L.DomUtil.create('div', 'custom-credit')
-      div.innerHTML = `Karten-Daten © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>`
-      return div
+      const container = L.DomUtil.create('div', 'custom-credit')
+      // mount the Credit.vue into this container so it's managed by Vue
+      this._vueApp = createApp(Credit)
+      this._vueApp.mount(container)
+      return container
+    },
+    onRemove: function () {
+      if (this._vueApp) {
+        try { this._vueApp.unmount() } catch (e) { /* ignore */ }
+        this._vueApp = null
+      }
     }
   })
+
   map.value.addControl(new CreditControl())
 
   L.marker(START_COORDS).addTo(map.value).bindPopup('<b>Wien</b><br>Willkommen auf deiner OSM-Karte.')
