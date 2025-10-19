@@ -15,18 +15,68 @@ import { onMounted, ref, provide } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import osmtogeojson from 'osmtogeojson'
+import { booleanIntersects, booleanWithin, intersect as turfIntersect } from '@turf/turf'
 import SpinnerComp from './Spinner.vue'
 import { useSpinner } from '../../composables/useSpinner'
 import DrawControls from './DrawControls.vue'
 import MapToolbar from './MapToolbar.vue'
 import Credit from './Credit.vue'
 import { createApp } from 'vue'
+import ColorLegend from './ColorLegend.vue'
 
 const mapContainer = ref(null)
 const map = ref(null)
 const START_COORDS = [48.2082, 16.3738]
 const START_ZOOM = 13
 const spinner = useSpinner()
+// color mapping helpers
+const COLOR_MAP = {
+  residential: '#60a5fa',
+  commercial: '#f97316',
+  industrial: '#64748b',
+  education: '#10b981',
+  healthcare: '#ef4444',
+  religious: '#8b5cf6',
+  leisure: '#34d399',
+  tourism: '#f59e0b',
+  unknown: '#888888'
+}
+
+function getFeatureType(feature) {
+  const p = feature.properties || {}
+  if (p.amenity) {
+    const a = String(p.amenity).toLowerCase()
+    if (a === 'school' || a === 'university') return 'education'
+    if (a === 'hospital' || a === 'clinic' || a === 'doctors') return 'healthcare'
+    if (a === 'place_of_worship') return 'religious'
+    return 'amenity'
+  }
+  if (p.building) {
+    const b = String(p.building).toLowerCase()
+    if (b.includes('resid') || b === 'house' || b === 'apartments') return 'residential'
+    if (b.includes('commer') || b.includes('retail') || b.includes('shop')) return 'commercial'
+    if (b.includes('indust')) return 'industrial'
+    if (b.includes('church') || b.includes('cathedral')) return 'religious'
+    return 'building'
+  }
+  if (p.shop || p.office) return 'commercial'
+  if (p.leisure) return 'leisure'
+  if (p.tourism) return 'tourism'
+  if (p.landuse) {
+    if (p.landuse === 'residential') return 'residential'
+    if (p.landuse === 'industrial') return 'industrial'
+    if (p.landuse === 'commercial') return 'commercial'
+    if (p.landuse === 'forest' || p.landuse === 'park') return 'leisure'
+  }
+  if (feature.geometry && feature.geometry.type === 'Point') return 'point'
+  return 'unknown'
+}
+
+function getStyleForFeature(feature) {
+  const t = getFeatureType(feature)
+  const color = COLOR_MAP[t] || COLOR_MAP.unknown
+  return { color: color, fillColor: color, fillOpacity: 0.35, weight: 2 }
+}
 let _locTimer = null
 
 
@@ -66,6 +116,16 @@ onMounted(() => {
   })
 
   map.value.addControl(new CreditControl())
+
+  // mount legend as a leaflet control
+  const LegendControl = L.Control.extend({ options: { position: 'topright' }, onAdd: function() {
+    const container = L.DomUtil.create('div', 'color-legend-control')
+    this._vueApp = createApp(ColorLegend)
+    this._vueApp.mount(container)
+    return container
+  }, onRemove: function() { if (this._vueApp) { try { this._vueApp.unmount() } catch(e){} this._vueApp = null } }
+  })
+  map.value.addControl(new LegendControl())
 
   L.marker(START_COORDS).addTo(map.value).bindPopup('<b>Wien</b><br>Willkommen auf deiner OSM-Karte.')
   // spinner is managed via the useSpinner() composable
@@ -153,13 +213,21 @@ onMounted(() => {
           provided._geoJsonLayer = null
         }
         provided._geoJsonLayer = L.geoJSON(geojson, {
-          style: function(feature) {
-            if (feature.properties && feature.properties.building) {
-              return { color: '#000', fillColor: '#000', fillOpacity: 0.9, weight: 1 };
-            }
-            return { color: '#888', fillColor: '#fff', fillOpacity: 0.1, weight: 0.5 };
+          style: getStyleForFeature,
+          pointToLayer: function(feature, latlng) {
+            const s = getStyleForFeature(feature)
+            return L.circleMarker(latlng, { radius: 6, fillColor: s.fillColor, color: '#fff', weight: 1, fillOpacity: 1 })
           },
-          pointToLayer: function() { return null; } // Prevent markers for points
+          onEachFeature: function(feature, layer) {
+            // attach a helpful popup showing type and key tags
+            try {
+              const t = getFeatureType(feature)
+              const props = feature.properties || {}
+              const title = props.name || props.id || (props.type || t)
+              const html = `<div><strong>${title}</strong><div>Typ: ${t}</div></div>`
+              layer.bindPopup(html)
+            } catch (e) { /* ignore */ }
+          }
         }).addTo(map.value)
         try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { console.warn('fitBounds failed', e) }
         if (window.confirm('Möchtest du diese GeoJSON-Daten in die Datenbank speichern?')) {
@@ -207,10 +275,55 @@ onMounted(() => {
     try { try { spinner.show() } catch (e) {};
       const coords = layer_geojson.geometry.coordinates[0]
       const polyString = coords.map(ll => `${ll[1]} ${ll[0]}`).join(' ')
-      const overpassQuery = `\n        [out:json][timeout:25];\n        (\n          way(poly:"${polyString}");\n          node(poly:"${polyString}");\n        );\n        out body;\n      `
+        const overpassQuery = `\n        [out:json][timeout:25];\n        (\n          way(poly:"${polyString}");\n          relation(poly:"${polyString}");\n          node(poly:"${polyString}");\n        );\n        out geom;\n      `
       const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(overpassQuery) })
       const data = await res.json()
       const geojson = osmtogeojson(data)
+      // Filter features: only include those that intersect the drawn polygon
+      try {
+        if (geojson && geojson.type === 'FeatureCollection' && Array.isArray(geojson.features)) {
+          const seen = new Set()
+          const resultFeatures = []
+          for (const f of geojson.features) {
+            try {
+              // dedupe by id if present
+              const fid = f.id || (f.properties && (f.properties.id || f.properties['@id']))
+              if (fid && seen.has(fid)) continue
+              // Points: keep only if fully within drawn polygon
+              let clipped = null
+              const geomType = f.geometry && f.geometry.type
+              if (geomType === 'Point' || geomType === 'MultiPoint') {
+                try {
+                  if (booleanWithin(f, layer_geojson)) clipped = f
+                } catch (e) { /* ignore */ }
+              } else {
+                // For lines/polygons, prefer clipping the geometry to the drawn polygon
+                try {
+                  const inter = turfIntersect(f, layer_geojson)
+                  if (inter) {
+                    // ensure properties are preserved
+                    inter.properties = Object.assign({}, f.properties)
+                    clipped = inter
+                  } else if (booleanIntersects(f, layer_geojson)) {
+                    // fallback: include original if it intersects but couldn't be clipped
+                    clipped = f
+                  }
+                } catch (e) {
+                  // intersect may fail for some geometry types - fallback to intersects
+                  try { if (booleanIntersects(f, layer_geojson)) clipped = f } catch (e2) { /* ignore */ }
+                }
+              }
+              if (clipped) {
+                if (fid) seen.add(fid)
+                resultFeatures.push(clipped)
+              }
+            } catch (err) {
+              // skip problematic feature
+            }
+          }
+          return { type: 'FeatureCollection', features: resultFeatures }
+        }
+      } catch (err) { console.warn('Filtering geojson failed', err) }
       return geojson
   } catch (err) { console.error('Fehler beim Abrufen von OSM-Daten:', err); alert('OSM-Daten konnten nicht geladen werden.') }
   finally { try { spinner.hide() } catch (e) {} }
