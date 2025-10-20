@@ -1,6 +1,6 @@
 <template>
   <div class="toolbar">
-    <button @click="$emit('locate')" class="bg-blue-600 text-white rounded px-3 py-2">📍 Standort</button>
+    <button @click="onLocate" class="bg-blue-600 text-white rounded px-3 py-2">📍 Standort</button>
 
     <div class="flex items-center gap-1">
       <input v-model="q" @keyup.enter="onSearch" placeholder="Ort suchen" class="search-input" />
