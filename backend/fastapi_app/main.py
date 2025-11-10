@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
+from geo_processor import process_geojson_make_black
 import os, json
 
 app = FastAPI()
@@ -71,3 +72,42 @@ def insert_feature(conn, feature):
         "props": json.dumps(props),
         "geom": json.dumps(geom)
     })
+
+@app.post("/upload-geojson/process")
+async def upload_geojson_with_process(
+        geojson: dict = Body(...),
+        process: bool = Query(True, description="Wenn true: verarbeite GeoJSON vor dem Speichern")
+):
+    """
+    Wenn `process=true`, wird das GeoJSON zuerst durch `geo_processor` verändert.
+    Danach werden die (verarbeiteten) Features wie bisher in die DB geschrieben.
+    Die verarbeitete GeoJSON wird als JSON im Response-Body zurückgegeben.
+    """
+    try:
+        # validieren einfacher Typen
+        gtype = geojson.get("type")
+        if gtype not in ["Feature", "FeatureCollection"]:
+            raise HTTPException(status_code=400, detail="Ungültiger GeoJSON-Typ")
+
+        # optional verarbeiten
+        out_geojson = geojson
+        if process and gtype == "FeatureCollection":
+            out_geojson = process_geojson_make_black(geojson)
+
+        # Speichern in DB wie in insert_feature (verwende vorhandene insert_feature)
+        with engine.begin() as conn:
+            if out_geojson.get("type") == "FeatureCollection":
+                for feature in out_geojson.get("features", []):
+                    insert_feature(conn, feature)
+                count = len(out_geojson.get("features", []))
+            else:
+                insert_feature(conn, out_geojson)
+                count = 1
+
+        # Response: verarbeitete GeoJSON zurückgeben
+        return {"status": "success", "inserted": count, "geojson": out_geojson}
+
+    except Exception as e:
+        import traceback
+        print("❌ Fehler beim Verarbeiten/Speichern:\n", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Fehler: {e}")

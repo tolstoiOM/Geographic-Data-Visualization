@@ -202,53 +202,78 @@ onMounted(() => {
   }
 
   provided.handleUpload = async function(file) {
-    if (!file) return
-    spinner.show()
-    const reader = new FileReader()
-    reader.onerror = (e) => {
-      console.error('FileReader error', e)
-      alert('Fehler beim Lesen der Datei.')
-      try { spinner.hide() } catch (err) {}
-    }
-    reader.onload = async (e) => {
-      try {
-        const geojson = JSON.parse(e.target.result)
-        if (!geojson.type || (geojson.type !== 'FeatureCollection' && geojson.type !== 'Feature')) throw new Error('Nicht unterstützter GeoJSON-Typ')
-        if (provided._geoJsonLayer) {
-          try { map.value.removeLayer(provided._geoJsonLayer) } catch (e) { /* ignore */ }
-          provided._geoJsonLayer = null
+    if (!file) return;
+    spinner.show();
+    try {
+      // lese Datei
+      const text = await file.text();
+      const geojson = JSON.parse(text);
+      if (!geojson.type || (geojson.type !== 'FeatureCollection' && geojson.type !== 'Feature')) {
+        throw new Error('Nicht unterstützter GeoJSON-Typ');
+      }
+
+      // optional: Verarbeitung per Backend (nur wenn bestätigt)
+      const doProcess = window.confirm('GeoJSON mit dem Python‑Skript überarbeiten?');
+      let processed = geojson;
+      if (doProcess) {
+        const url = `${import.meta.env.VITE_API_URL || ''}/upload-geojson/process?process=true`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geojson)
+        });
+        if (!res.ok) {
+          const msg = await res.text();
+          throw new Error(msg || 'Server-Fehler beim Verarbeiten');
         }
-        // store last raw geojson so legend filtering can reuse it
-        provided._lastGeoJSON = geojson
-        provided._geoJsonLayer = L.geoJSON(geojson, {
-          style: getStyleForFeature,
-          pointToLayer: function(feature, latlng) {
-            const s = getStyleForFeature(feature)
-            return L.circleMarker(latlng, { radius: 6, fillColor: s.fillColor, color: '#fff', weight: 1, fillOpacity: 1 })
-          },
-          onEachFeature: function(feature, layer) {
-            // attach a helpful popup showing type and key tags
-            try {
-              const t = getFeatureType(feature)
-              const props = feature.properties || {}
-              const title = props.name || props.id || (props.type || t)
-              const html = `<div><strong>${title}</strong><div>Typ: ${t}</div></div>`
-              layer.bindPopup(html)
-            } catch (e) { /* ignore */ }
-          }
-        }).addTo(map.value)
-        try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { console.warn('fitBounds failed', e) }
-        if (window.confirm('Möchtest du diese GeoJSON-Daten in die Datenbank speichern?')) {
-          await provided.saveGeoJSONToDB(geojson)
-          alert('GeoJSON-Daten wurden an das Backend gesendet.')
+        const data = await res.json();
+        processed = data.geojson || geojson;
+
+        // Download nur wenn Verarbeitung ausgewählt und erfolgreich
+        try {
+          const filename = (file.name || 'uploaded.geojson').replace(/\.geojson$/i, '') + '_edited.geojson';
+          provided.downloadGeoJSON(processed, filename);
+        } catch (e) { console.warn('Download fehlgeschlagen', e) }
+      }
+
+      // entferne alte Layer und zeige (verarbeitete oder originale) GeoJSON
+      if (provided._geoJsonLayer) {
+        try { map.value.removeLayer(provided._geoJsonLayer) } catch (e) {}
+        provided._geoJsonLayer = null;
+      }
+      provided._lastGeoJSON = processed;
+      provided._geoJsonLayer = L.geoJSON(processed, {
+        style: getStyleForFeature,
+        pointToLayer: function(feature, latlng) {
+          const s = getStyleForFeature(feature);
+          return L.circleMarker(latlng, { radius: 6, fillColor: s.fillColor, color: '#fff', weight: 1, fillOpacity: 1 });
+        },
+        onEachFeature: function(feature, layer) {
+          try {
+            const t = getFeatureType(feature);
+            const props = feature.properties || {};
+            const title = props.name || props.id || (props.type || t);
+            const html = `<div><strong>${title}</strong><div>Typ: ${t}</div></div>`;
+            layer.bindPopup(html);
+          } catch (e) { /* ignore */ }
         }
-      } catch (err) {
-        console.error('Fehler beim Lesen der Datei:', err)
-        alert('Ungültige GeoJSON-Datei.')
-      } finally { spinner.hide() }
+      }).addTo(map.value);
+
+      try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { /* ignore */ }
+
+      // Möglichkeit, die (verarbeitete oder originale) GeoJSON in DB zu speichern (wie vorher)
+      if (window.confirm('Möchtest du diese GeoJSON-Daten in die Datenbank speichern?')) {
+        await provided.saveGeoJSONToDB(processed);
+        alert('GeoJSON-Daten wurden an das Backend gesendet.');
+      }
+
+    } catch (err) {
+      console.error('Fehler beim Upload/Verarbeiten:', err);
+      alert('Fehler beim Verarbeiten der Datei: ' + (err.message || err));
+    } finally {
+      spinner.hide();
     }
-    reader.readAsText(file)
-  }
+  };
 
   // apply legend filter by rebuilding the geojson layer from provided._lastGeoJSON
   function applyLegendFilter(selectedCategories) {
