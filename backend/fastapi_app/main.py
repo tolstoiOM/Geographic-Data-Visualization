@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from geo_processor import process_geojson_make_black
+from ai_processor import list_scripts as ai_list_scripts, process as ai_process
 import os, json
 
 app = FastAPI()
@@ -22,6 +23,32 @@ engine = create_engine(DATABASE_URL, future=True)
 @app.get("/")
 async def root():
     return {"message": "FastAPI mit PostGIS läuft!"}
+
+
+@app.get('/ai-scripts')
+async def get_ai_scripts():
+    """Gibt die verfügbaren kleinen AI-/Processing-Skripte zurück."""
+    try:
+        return {"scripts": ai_list_scripts()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post('/augment')
+async def augment_geojson(script_id: str = Query(..., description='ID des AI-Skripts'), geojson: dict = Body(...)):
+    """Augmentiert ein übergebenes GeoJSON mit dem ausgewählten Script und liefert das Ergebnis zurück."""
+    try:
+        if not geojson or geojson.get('type') not in ['FeatureCollection', 'Feature']:
+            raise HTTPException(status_code=400, detail='Ungültiges GeoJSON')
+
+        result = ai_process(geojson, script_id)
+        return {"status": "success", "script_id": script_id, "geojson": result}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        import traceback
+        print('❌ AI processing error:', traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload-geojson")
 async def upload_geojson(geojson: dict):

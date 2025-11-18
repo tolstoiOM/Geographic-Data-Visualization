@@ -33,23 +33,23 @@ services:
       - WATCHPACK_POLLING=true
     command: npm run dev
     depends_on:
-      - backend_flask
       - backend_fastapi
 
-  # --------- Python Flask Backend ---------
-  backend_flask:
-    build:
-      context: ./backend/flask_app
-      dockerfile: Dockerfile
-    container_name: backend_flask
-    ports:
-      - "5001:5000"
-    volumes:
-      - ./backend/flask_app:/app
-    environment:
-      - DATABASE_URL=postgresql://sepjuser:sepjpw@database:5432/sepjdb
-    depends_on:
-      - database
+  # (Flask backend archived) The legacy Flask service was removed during cleanup.
+  # If you need to re-enable it, uncomment and adjust the following block and restore backend/flask_app.
+  # backend_flask:
+  #   build:
+  #     context: ./backend/flask_app
+  #     dockerfile: Dockerfile
+  #   container_name: backend_flask
+  #   ports:
+  #     - "5001:5000"
+  #   volumes:
+  #     - ./backend/flask_app:/app
+  #   environment:
+  #     - DATABASE_URL=postgresql://sepjuser:sepjpw@database:5432/sepjdb
+  #   depends_on:
+  #     - database
 
   # --------- Python FastAPI Backend ---------
   backend_fastapi:

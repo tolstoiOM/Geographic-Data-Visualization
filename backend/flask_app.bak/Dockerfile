@@ -1,4 +1,4 @@
-# ./backend/flask_app/Dockerfile
+# Backup of original backend/flask_app/Dockerfile
 FROM python:3.12-slim
 
 WORKDIR /app

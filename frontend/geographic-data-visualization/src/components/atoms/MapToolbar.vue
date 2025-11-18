@@ -7,17 +7,29 @@
       <button @click="onSearch" class="px-3 py-2 bg-gray-200 rounded">Suchen</button>
     </div>
 
-    <label class="bg-green-600 text-white px-3 py-2 rounded cursor-pointer">
-      Upload
-      <input type="file" accept=".geojson,.json" @change="onUpload" class="hidden" />
-    </label>
+      <label class="bg-green-600 text-white px-3 py-2 rounded cursor-pointer">
+        Upload
+        <input type="file" accept=".geojson,.json" @change="onUpload" class="hidden" />
+      </label>
+
+      <!-- AI script selector -->
+      <div class="flex items-center gap-2">
+        <select v-model="selectedScript" class="px-2 py-1 border rounded bg-white">
+          <option disabled value="">AI-Skript wählen</option>
+          <option v-for="s in scripts" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </select>
+        <button @click="runAI" :disabled="!selectedScript" class="px-3 py-2 bg-indigo-600 text-white rounded">AI ausführen</button>
+      </div>
   </div>
 </template>
 
 <script setup>
 import { ref, inject } from 'vue'
+import { listAIScripts, augmentGeoJSON } from '@/services/geojsonService'
 const helpers = inject('helpers', null)
 const q = ref('')
+const scripts = ref([])
+const selectedScript = ref('')
 function onSearch() { if (q.value && helpers && typeof helpers.handleSearch === 'function') helpers.handleSearch(q.value) }
 function onUpload(e) { const f = e.target.files && e.target.files[0]; if (f && helpers && typeof helpers.handleUpload === 'function') helpers.handleUpload(f) }
 function onLocate() { if (helpers && typeof helpers.handleLocate === 'function') helpers.handleLocate() }
@@ -73,8 +85,46 @@ async function handleGeojsonFileUpload(file, onGeojsonLoaded) {
   // Anzeige: übergebe an Map / Parent-Component
   if (typeof onGeojsonLoaded === "function") {
     onGeojsonLoaded(resultGeojson);
-  } else {
-    console.log("Processed GeoJSON ready for display", resultGeojson);
+    } else {
+      // processed geojson passed to caller; debug log removed during cleanup
+    }
+}
+
+// load available AI scripts on component mount
+;(async function loadScripts(){
+  try {
+    const list = await listAIScripts()
+    scripts.value = list
+  } catch (e) {
+    // ignore - UI will remain without scripts
+    console.warn('Could not load AI scripts', e)
+  }
+})()
+
+async function runAI() {
+  if (!selectedScript.value) { alert('Bitte ein AI-Skript auswählen'); return }
+  if (!helpers || !helpers._lastGeoJSON) { alert('Keine GeoJSON-Daten vorhanden. Bitte zuerst hochladen oder zeichnen.'); return }
+
+  try {
+    const result = await augmentGeoJSON(helpers._lastGeoJSON, selectedScript.value)
+    if (result) {
+      if (helpers && typeof helpers.showProcessedGeoJSON === 'function') {
+        helpers.showProcessedGeoJSON(result)
+      } else {
+        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/geo+json' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = 'ai_augmented.geojson'
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(a.href)
+      }
+      alert('AI-Skript erfolgreich ausgeführt.')
+    }
+  } catch (err) {
+    console.error('AI run failed', err)
+    alert('Fehler beim Ausführen des AI-Skripts: ' + (err.message || err))
   }
 }
 </script>

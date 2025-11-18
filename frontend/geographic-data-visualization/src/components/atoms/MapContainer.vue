@@ -133,7 +133,7 @@ onMounted(() => {
   })
   map.value.addControl(new LegendControl())
 
-  L.marker(START_COORDS).addTo(map.value).bindPopup('<b>Wien</b><br>Willkommen auf deiner OSM-Karte.')
+  // Default start marker removed during cleanup (was creating an unwanted marker on load)
   // spinner is managed via the useSpinner() composable
 
 
@@ -408,6 +408,46 @@ onMounted(() => {
     document.body.appendChild(dlAnchor)
     dlAnchor.click()
     dlAnchor.remove()
+  }
+
+  // Display processed/augmented GeoJSON with building-black style and no markers
+  provided.showProcessedGeoJSON = function(geojson) {
+    try {
+      if (!geojson || !geojson.type) return
+      // remove existing layer
+      if (provided._geoJsonLayer) {
+        try { map.value.removeLayer(provided._geoJsonLayer) } catch (e) { /* ignore */ }
+        provided._geoJsonLayer = null
+      }
+
+      provided._lastGeoJSON = geojson
+
+      const styleFn = function(feature) {
+        const props = feature && feature.properties ? feature.properties : {}
+        // treat as building if property exists
+        if (props.building || (props.tags && props.tags.building)) {
+          return { color: '#000', fillColor: '#000', fillOpacity: 0.95, weight: 1 }
+        }
+        // fallback: use existing type-based styling
+        return getStyleForFeature(feature)
+      }
+
+      provided._geoJsonLayer = L.geoJSON(geojson, {
+        style: styleFn,
+        // do NOT create markers for point features
+        pointToLayer: function() { return null },
+        onEachFeature: function(feature, layer) {
+          try {
+            const props = feature.properties || {}
+            const title = props.name || props.id || props['@id'] || getFeatureType(feature)
+            const html = `<div><strong>${title}</strong><div>${props.building ? 'building' : ''}</div></div>`
+            layer.bindPopup(html)
+          } catch (e) { /* ignore */ }
+        }
+      }).addTo(map.value)
+
+      try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { /* ignore */ }
+    } catch (err) { console.warn('showProcessedGeoJSON failed', err) }
   }
 
   // helpers object was provided earlier; we've now populated it

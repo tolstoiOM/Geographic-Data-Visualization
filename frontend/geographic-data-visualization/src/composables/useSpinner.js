@@ -9,7 +9,6 @@ export function useSpinner({ autoHideMs = 60000 } = {}) {
     if (_timeout) clearTimeout(_timeout)
     if (autoHideMs > 0) {
       _timeout = setTimeout(() => {
-        console.warn('[useSpinner] auto-hiding spinner after timeout')
         count.value = 0
         isVisible.value = false
         _timeout = null
@@ -28,7 +27,7 @@ export function useSpinner({ autoHideMs = 60000 } = {}) {
     // start or restart a fallback hide timer
     if (typeof timeoutMs === 'number') {
       if (_timeout) clearTimeout(_timeout)
-      if (timeoutMs > 0) _timeout = setTimeout(() => { count.value = 0; isVisible.value = false; _timeout = null; console.warn('[useSpinner] auto-hide (per-call)') }, timeoutMs)
+  if (timeoutMs > 0) _timeout = setTimeout(() => { count.value = 0; isVisible.value = false; _timeout = null }, timeoutMs)
     } else {
       _startAutoHide()
     }
@@ -37,7 +36,7 @@ export function useSpinner({ autoHideMs = 60000 } = {}) {
   function hide() {
     count.value = Math.max(0, count.value - 1)
     isVisible.value = count.value > 0
-    console.debug('[useSpinner] hide -> count=', count.value)
+  // debug log removed during cleanup
     if (count.value === 0) _clearAutoHide()
   }
 
