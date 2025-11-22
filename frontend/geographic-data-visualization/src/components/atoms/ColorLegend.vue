@@ -5,6 +5,10 @@
       <button @click="selectAll" class="btn-small">Alle</button>
       <button @click="clearAll" class="btn-small">Keine</button>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <input type="checkbox" id="chk-ai-polygon" v-model="aiVisible" @change="onToggleAIPolygon" />
+      <label for="chk-ai-polygon">KI-Polygon anzeigen</label>
+    </div>
     <ul>
       <li v-for="(label, key) in labels" :key="key">
         <input type="checkbox" :id="`chk-${key}`" v-model="selected[key]" @change="onChange" />
@@ -18,13 +22,14 @@
 </template>
 
 <script setup>
-import { reactive, onMounted } from 'vue'
+import { reactive, onMounted, ref } from 'vue'
 
 // allow parent to pass initial selection and a callback function
 const props = defineProps({
   initialSelection: { type: Array, default: () => [] },
   // parent can pass a function to be called when selection changes
-  onSelectionChange: { type: Function, required: false }
+  onSelectionChange: { type: Function, required: false },
+  onAIPolygonToggle: { type: Function, required: false }
 })
 
 // Keep labels/colors in sync with MapContainer helper
@@ -56,6 +61,15 @@ const selected = reactive({})
 // initialize all keys; if initialSelection provided, use that
 for (const k of Object.keys(labels)) selected[k] = (props.initialSelection.length === 0) ? true : props.initialSelection.includes(k)
 
+// AI polygon visibility
+const aiVisible = ref(true)
+
+function onToggleAIPolygon() {
+  if (typeof props.onAIPolygonToggle === 'function') {
+    try { props.onAIPolygonToggle(aiVisible.value) } catch (e) { console.warn('onAIPolygonToggle threw', e) }
+  }
+}
+
 function emitSelection() {
   const arr = Object.keys(selected).filter(k => selected[k])
   if (typeof props.onSelectionChange === 'function') {
@@ -68,7 +82,7 @@ function selectAll() { for (const k of Object.keys(selected)) selected[k] = true
 function clearAll() { for (const k of Object.keys(selected)) selected[k] = false; emitSelection() }
 
 // call once on mount to notify parent of initial selection
-onMounted(() => { emitSelection() })
+onMounted(() => { emitSelection(); onToggleAIPolygon() })
 </script>
 
 <style scoped>

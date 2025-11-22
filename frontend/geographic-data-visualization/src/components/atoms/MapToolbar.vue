@@ -106,7 +106,19 @@ async function runAI() {
   if (!helpers || !helpers._lastGeoJSON) { alert('Keine GeoJSON-Daten vorhanden. Bitte zuerst hochladen oder zeichnen.'); return }
 
   try {
-    const result = await augmentGeoJSON(helpers._lastGeoJSON, selectedScript.value)
+    // build payload; include clip if user has drawn a polygon
+    let payload = helpers._lastGeoJSON
+    try {
+      if (helpers && helpers._lastClip) {
+        // shallow clone to avoid mutating original
+        payload = Object.assign({}, helpers._lastGeoJSON)
+        payload.clip = helpers._lastClip
+        // optionally include a default min_area_fraction (0.0). Adjust if you want stricter filtering.
+        payload.min_area_fraction = payload.min_area_fraction || 0.0
+      }
+    } catch (e) { /* ignore and fallback to sending lastGeoJSON only */ }
+
+    const result = await augmentGeoJSON(payload, selectedScript.value)
     if (result) {
       if (helpers && typeof helpers.showProcessedGeoJSON === 'function') {
         helpers.showProcessedGeoJSON(result)

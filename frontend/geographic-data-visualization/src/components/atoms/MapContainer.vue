@@ -120,10 +120,22 @@ onMounted(() => {
   // mount legend as a leaflet control
   const LegendControl = L.Control.extend({ options: { position: 'topright' }, onAdd: function() {
     const container = L.DomUtil.create('div', 'color-legend-control')
-    // pass a callback so the legend can notify the map when selection changes
+    // pass callbacks so the legend can notify the map when selection changes or AI polygon toggle
     const app = createApp(ColorLegend, {
       onSelectionChange: (selectedCategories) => {
         try { applyLegendFilter(selectedCategories) } catch (e) { console.warn('Legend selection handler failed', e) }
+      },
+      onAIPolygonToggle: (visible) => {
+        try {
+          // show/hide the dedicated AI layer
+          if (provided._aiLayer) {
+            if (visible) {
+              try { map.value.addLayer(provided._aiLayer) } catch (e) {}
+            } else {
+              try { map.value.removeLayer(provided._aiLayer) } catch (e) {}
+            }
+          }
+        } catch (e) { console.warn('AI polygon toggle failed', e) }
       }
     })
     this._vueApp = app
@@ -375,13 +387,14 @@ onMounted(() => {
                     // ensure properties are preserved
                     inter.properties = Object.assign({}, f.properties)
                     clipped = inter
-                  } else if (booleanIntersects(f, layer_geojson)) {
-                    // fallback: include original if it intersects but couldn't be clipped
-                    clipped = f
+                  } else {
+                    // if no intersection geometry could be produced, include the
+                    // original feature only when it is fully within the drawn polygon
+                    try { if (booleanWithin(f, layer_geojson)) clipped = f } catch (e2) { /* ignore */ }
                   }
                 } catch (e) {
-                  // intersect may fail for some geometry types - fallback to intersects
-                  try { if (booleanIntersects(f, layer_geojson)) clipped = f } catch (e2) { /* ignore */ }
+                  // intersect may fail for some geometry types - only include if fully within
+                  try { if (booleanWithin(f, layer_geojson)) clipped = f } catch (e2) { /* ignore */ }
                 }
               }
               if (clipped) {
@@ -422,6 +435,11 @@ onMounted(() => {
 
       provided._lastGeoJSON = geojson
 
+      // Split out AI features (those annotated by backend) so we can toggle them
+      const allFeatures = Array.isArray(geojson.features) ? geojson.features : []
+      const aiFeatures = allFeatures.filter(f => f && f.properties && f.properties.ai_script)
+      const normalFeatures = allFeatures.filter(f => !(f && f.properties && f.properties.ai_script))
+
       const styleFn = function(feature) {
         const props = feature && feature.properties ? feature.properties : {}
         // treat as building if property exists
@@ -432,9 +450,13 @@ onMounted(() => {
         return getStyleForFeature(feature)
       }
 
-      provided._geoJsonLayer = L.geoJSON(geojson, {
+      // remove existing layers if present
+      if (provided._geoJsonLayer) { try { map.value.removeLayer(provided._geoJsonLayer) } catch (e) {} provided._geoJsonLayer = null }
+      if (provided._aiLayer) { try { map.value.removeLayer(provided._aiLayer) } catch (e) {} provided._aiLayer = null }
+
+      // add normal features layer
+      provided._geoJsonLayer = L.geoJSON({ type: 'FeatureCollection', features: normalFeatures }, {
         style: styleFn,
-        // do NOT create markers for point features
         pointToLayer: function() { return null },
         onEachFeature: function(feature, layer) {
           try {
@@ -446,7 +468,28 @@ onMounted(() => {
         }
       }).addTo(map.value)
 
-      try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { /* ignore */ }
+      // add AI polygon layer (highlighted style)
+      if (aiFeatures && aiFeatures.length > 0) {
+        provided._aiLayer = L.geoJSON({ type: 'FeatureCollection', features: aiFeatures }, {
+          style: function(feature) {
+            return { color: '#1f78b4', fillColor: '#93c5fd', fillOpacity: 0.35, weight: 2 }
+          },
+          pointToLayer: function(feature, latlng) { return null },
+          onEachFeature: function(feature, layer) {
+            try {
+              const props = feature.properties || {}
+              const title = props.ai_script ? props.ai_script : (props.name || getFeatureType(feature))
+              const html = `<div><strong>${title}</strong><div>${props.dominant_type ? 'dominant: '+props.dominant_type : ''}</div></div>`
+              layer.bindPopup(html)
+            } catch (e) { /* ignore */ }
+          }
+        }).addTo(map.value)
+      }
+
+      try { 
+        const boundsLayer = provided._geoJsonLayer || provided._aiLayer
+        if (boundsLayer) map.value.fitBounds(boundsLayer.getBounds())
+      } catch (e) { /* ignore */ }
     } catch (err) { console.warn('showProcessedGeoJSON failed', err) }
   }
 

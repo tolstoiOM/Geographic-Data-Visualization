@@ -50,6 +50,10 @@ function initializeDrawControl(map) {
     drawnItems.addLayer(layer)
 
     const geojson = layer.toGeoJSON()
+    // store the last drawn polygon in helpers so other components can use it as 'clip'
+    try {
+      if (helpers) helpers._lastClip = geojson
+    } catch (e) { /* ignore */ }
     try {
       const exportedGeoJson = await helpers?.exportGeoJSON(geojson)
       if (exportedGeoJson && window.confirm('Möchten Sie die OSM-Objekte aus dem gezeichneten Bereich als GeoJSON exportieren?')) {
@@ -58,6 +62,32 @@ function initializeDrawControl(map) {
     } catch (err) {
       console.error('Error exporting GeoJSON:', err)
     }
+  })
+
+  // update helper when layers are edited (update stored clip)
+  map.on(L.Draw.Event.EDITED, function(e) {
+    try {
+      const layers = drawnItems.getLayers()
+      if (layers && layers.length > 0) {
+        // take the first layer as current clip
+        const g = layers[0].toGeoJSON()
+        if (helpers) helpers._lastClip = g
+      } else {
+        if (helpers) helpers._lastClip = null
+      }
+    } catch (err) { /* ignore */ }
+  })
+
+  // when a drawn layer is deleted, clear stored clip if none remain
+  map.on(L.Draw.Event.DELETED, function(e) {
+    try {
+      const layers = drawnItems.getLayers()
+      if (!layers || layers.length === 0) {
+        if (helpers) helpers._lastClip = null
+      } else {
+        if (helpers) helpers._lastClip = layers[0].toGeoJSON()
+      }
+    } catch (err) { /* ignore */ }
   })
 }
 
