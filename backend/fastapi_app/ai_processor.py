@@ -135,9 +135,19 @@ def _detect_feature_type(feature: Dict[str, Any]) -> str:
     'religious', 'leisure', 'tourism', 'unknown', 'amenity', 'building', 'point'.
     """
     p = feature.get('properties') or {}
+    # Some sources (frontend / OSM imports) nest tags under a `tags` object
+    tags = p.get('tags') if isinstance(p.get('tags'), dict) else {}
+
+    def _get(key: str):
+        v = p.get(key)
+        if v is None and isinstance(tags, dict):
+            v = tags.get(key)
+        return v
+
     # amenity
-    if 'amenity' in p:
-        a = str(p.get('amenity')).lower()
+    a_val = _get('amenity')
+    if a_val:
+        a = str(a_val).lower()
         if a in ('school', 'university'):
             return 'education'
         if a in ('hospital', 'clinic', 'doctors'):
@@ -145,9 +155,11 @@ def _detect_feature_type(feature: Dict[str, Any]) -> str:
         if a == 'place_of_worship':
             return 'religious'
         return 'amenity'
+
     # building
-    if 'building' in p:
-        b = str(p.get('building')).lower()
+    b_val = _get('building')
+    if b_val:
+        b = str(b_val).lower()
         if 'resid' in b or b in ('house', 'apartments'):
             return 'residential'
         if 'commer' in b or 'retail' in b or 'shop' in b:
@@ -157,20 +169,22 @@ def _detect_feature_type(feature: Dict[str, Any]) -> str:
         if 'church' in b or 'cathedral' in b:
             return 'religious'
         return 'building'
-    if p.get('shop') or p.get('office'):
+
+    if _get('shop') or _get('office'):
         return 'commercial'
-    if p.get('leisure'):
+    if _get('leisure'):
         return 'leisure'
-    if p.get('tourism'):
+    if _get('tourism'):
         return 'tourism'
-    if p.get('landuse'):
-        if p.get('landuse') == 'residential':
+    lu = _get('landuse')
+    if lu:
+        if lu == 'residential':
             return 'residential'
-        if p.get('landuse') == 'industrial':
+        if lu == 'industrial':
             return 'industrial'
-        if p.get('landuse') == 'commercial':
+        if lu == 'commercial':
             return 'commercial'
-        if p.get('landuse') in ('forest', 'park'):
+        if lu in ('forest', 'park'):
             return 'leisure'
 
     geom = feature.get('geometry')
