@@ -1160,6 +1160,177 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # Additionally: if the computed place_info is a city (e.g. 'Wien') but
+    # several features contain district-like names in their properties, prefer
+    # the most common district derived from features. Also honor explicit
+    # `prefer_district` flag in the input.
+    try:
+        prefer_district_flag = bool(geojson.get('prefer_district') or geojson.get('ensure_place_fields'))
+    except Exception:
+        prefer_district_flag = False
+    try:
+        # gather derived names/types from features
+        derived_counts = {}
+        derived_types = {}
+        for f in features:
+            try:
+                d = _derive_place_from_props(f.get('properties') or {})
+                if not d or not d.get('name'):
+                    continue
+                name = d.get('name')
+                t = (d.get('type') or '').lower() if isinstance(d.get('type'), str) else None
+                derived_counts[name] = derived_counts.get(name, 0) + 1
+                if t:
+                    derived_types[name] = t
+            except Exception:
+                continue
+        if derived_counts:
+            most_derived_name, most_derived_count = max(derived_counts.items(), key=lambda kv: kv[1])
+            most_derived_type = derived_types.get(most_derived_name)
+            # if derived type looks like a district, and either we explicitly prefer district
+            # or the existing place_info is a city-level type, override place_info
+            is_city_level = False
+            try:
+                ptype = (place_info.get('type') or '').lower() if place_info and isinstance(place_info.get('type'), str) else None
+                if not ptype or ptype in ('city', 'town', 'display_name'):
+                    is_city_level = True
+            except Exception:
+                is_city_level = True
+
+            if most_derived_type and most_derived_type in ('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk') and (prefer_district_flag or is_city_level):
+                place_info = {'name': most_derived_name, 'type': 'district', 'source': 'derived_from_features_override'}
+                try:
+                    print(f"[place_enrich] overriding place_info with derived district: {place_info}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # If we still don't have place_info, try to derive the most common
+    # place name/type from the input features' properties as a last-resort.
+    if not place_info:
+        try:
+            name_counts = {}
+            type_counts = {}
+            for f in features:
+                try:
+                    p = f.get('properties') or {}
+                    d = _derive_place_from_props(p)
+                    if d and d.get('name'):
+                        n = d.get('name')
+                        name_counts[n] = name_counts.get(n, 0) + 1
+                        if d.get('type'):
+                            type_counts[d.get('type')] = type_counts.get(d.get('type'), 0) + 1
+                except Exception:
+                    continue
+            if name_counts:
+                # choose most common name and (if any) most common derived type
+                most_name = max(name_counts.items(), key=lambda kv: kv[1])[0]
+                most_type = None
+                if type_counts:
+                    most_type = max(type_counts.items(), key=lambda kv: kv[1])[0]
+                place_info = {'name': most_name, 'type': most_type, 'source': 'derived_from_features'}
+                try:
+                    print(f"[place_enrich] derived place_info from features: {place_info}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Helper: try to derive place name/type from a feature's properties
+    def _derive_place_from_props(p: Dict[str, Any]):
+        if not p:
+            return None
+        # prefer district-like keys first, then fall back to general name keys
+        for k in ('district', 'bezirk', 'city_district', 'suburb', 'neighbourhood', 'place_name', 'place', 'name', 'label', 'display_name', 'addr:suburb', 'addr:city'):
+            v = p.get(k) or (p.get('tags') or {}).get(k)
+            if v:
+                # try to also find a sensible type
+                t = None
+                for tk in ('district', 'place_type', 'place', 'amenity', 'building', 'landuse', 'shop', 'leisure'):
+                    tv = p.get(tk) or (p.get('tags') or {}).get(tk)
+                    if tv:
+                        t = str(tv)
+                        break
+                return {'name': str(v), 'type': t or None, 'source': 'props'}
+        # no suitable name found
+        return None
+
+    # If we still don't have place_info, try to derive the most common
+    # place name/type from the input features' properties as a last-resort.
+    if not place_info:
+        try:
+            name_counts = {}
+            type_counts = {}
+            for f in features:
+                try:
+                    p = f.get('properties') or {}
+                    d = _derive_place_from_props(p)
+                    if d and d.get('name'):
+                        n = d.get('name')
+                        name_counts[n] = name_counts.get(n, 0) + 1
+                        if d.get('type'):
+                            type_counts[d.get('type')] = type_counts.get(d.get('type'), 0) + 1
+                except Exception:
+                    continue
+            if name_counts:
+                # choose most common name and (if any) most common derived type
+                most_name = max(name_counts.items(), key=lambda kv: kv[1])[0]
+                most_type = None
+                if type_counts:
+                    most_type = max(type_counts.items(), key=lambda kv: kv[1])[0]
+                place_info = {'name': most_name, 'type': most_type, 'source': 'derived_from_features'}
+                try:
+                    print(f"[place_enrich] derived place_info from features: {place_info}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Prefer district-level place when possible: if current place_info is a city or generic,
+    # attempt one targeted Nominatim reverse to extract district-like keys and replace.
+    def _extract_district_from_nominatim_json(j):
+        try:
+            addr = j.get('address') or {}
+            for key in ('city_district', 'suburb', 'borough', 'neighbourhood', 'district', 'bezirk'):
+                if addr.get(key):
+                    return {'name': str(addr.get(key)), 'type': key, 'source': 'nominatim_district'}
+        except Exception:
+            return None
+        return None
+
+    try:
+        need_district = False
+        if place_info:
+            ptype = (place_info.get('type') or '').lower() if isinstance(place_info.get('type'), str) else None
+            if not ptype or ptype in ('city', 'town', 'display_name'):
+                need_district = True
+        else:
+            # no place_info at all -> try to extract district
+            need_district = True
+
+        if need_district and hull is not None:
+            try:
+                rp = hull.representative_point() if hasattr(hull, 'representative_point') else hull.centroid
+                if rp and not rp.is_empty:
+                    params = {'format': 'jsonv2', 'lat': str(rp.y), 'lon': str(rp.x), 'addressdetails': '1'}
+                    url = 'https://nominatim.openstreetmap.org/reverse?' + urllib.parse.urlencode(params)
+                    req = urllib.request.Request(url, headers={'User-Agent': 'GeoVizAI/1.0 (your-email@example.com)'})
+                    ctx = ssl.create_default_context()
+                    with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+                        j = _json.loads(resp.read().decode('utf-8'))
+                        district_candidate = _extract_district_from_nominatim_json(j)
+                        if district_candidate:
+                            place_info = district_candidate
+                            try:
+                                print(f"[place_enrich] replaced place_info with district candidate: {place_info}")
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     out = dict(geojson)
     out.setdefault('features', list(features))
 
@@ -1215,22 +1386,106 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
             for f in out.get('features', []):
                 try:
                     props = f.get('properties') or {}
-                    if place_info.get('name') and not props.get('place_name'):
-                        props['place_name'] = place_info.get('name')
-                    if place_info.get('type') and not props.get('place_type'):
-                        props['place_type'] = place_info.get('type')
-                    if place_info.get('id') and not props.get('district_id'):
-                        props['district_id'] = place_info.get('id')
+                    # Prefer explicit district-like properties on the feature itself
+                    derived = _derive_place_from_props(props)
+                    if derived and derived.get('name') and derived.get('type') in ('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk'):
+                        # overwrite place_name with the district from feature props
+                        props['place_name'] = derived.get('name')
+                        props['place_type'] = 'district'
+                    else:
+                        # fallback to hull-level place_info (only if not present or not district)
+                        if place_info.get('name'):
+                            # If caller explicitly requested district preference, avoid overriding district-like feature props
+                            if not props.get('place_name'):
+                                props['place_name'] = place_info.get('name')
+                        if place_info.get('type') and not props.get('place_type'):
+                            props['place_type'] = place_info.get('type')
+                        if place_info.get('id') and not props.get('district_id'):
+                            props['district_id'] = place_info.get('id')
+
+                    # If still missing district and user requested strong district preference,
+                    # attempt a targeted Nominatim reverse on the feature centroid to extract district keys.
+                    prefer_district = bool(geojson.get('prefer_district') or geojson.get('ensure_place_fields'))
+                    if prefer_district and (not props.get('place_name') or (props.get('place_type') or '').lower() not in ('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk')):
+                        try:
+                            geom = f.get('geometry')
+                            if geom:
+                                gshape = shape(geom)
+                                rp = gshape.representative_point() if hasattr(gshape, 'representative_point') else gshape.centroid
+                                if rp and not rp.is_empty:
+                                    params = {'format': 'jsonv2', 'lat': str(rp.y), 'lon': str(rp.x), 'addressdetails': '1'}
+                                    url = 'https://nominatim.openstreetmap.org/reverse?' + urllib.parse.urlencode(params)
+                                    req = urllib.request.Request(url, headers={'User-Agent': 'GeoVizAI/1.0 (your-email@example.com)'})
+                                    ctx = ssl.create_default_context()
+                                    try:
+                                        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                                            j = _json.loads(resp.read().decode('utf-8'))
+                                            addr = j.get('address') or {}
+                                            for key in ('city_district', 'suburb', 'borough', 'neighbourhood', 'district', 'bezirk'):
+                                                if addr.get(key):
+                                                    props['place_name'] = str(addr.get(key))
+                                                    props['place_type'] = key
+                                                    if j.get('display_name') and not props.get('district_id'):
+                                                        props['district_id'] = j.get('osm_id') if j.get('osm_id') else None
+                                                    break
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
                     # also annotate features with dominant type if not present
                     if not props.get('dominant_type'):
                         props['dominant_type'] = dominant_dt
                     if not props.get('gebiet'):
-                        props['gebiet'] = _label_for_type_local(dominant_dt)
+                        try:
+                            props['gebiet'] = _label_for_type_local(dominant_dt)
+                        except Exception:
+                            pass
                     f['properties'] = props
                 except Exception:
                     continue
     except Exception:
         pass
+
+    # If ensure_place_fields is requested, try per-feature heuristics for missing fields
+    if geojson.get('ensure_place_fields'):
+        try:
+            print('[place_enrich] ensure_place_fields: filling missing place_name/place_type per feature')
+            for f in out.get('features', []):
+                try:
+                    props = f.get('properties') or {}
+                    # fill place_name
+                    if not props.get('place_name'):
+                        # try derive from props
+                        derived = _derive_place_from_props(props)
+                        if derived and derived.get('name'):
+                            props['place_name'] = derived.get('name')
+                    # fill place_type
+                    if not props.get('place_type'):
+                        derived = _derive_place_from_props(props)
+                        if derived and derived.get('type'):
+                            props['place_type'] = derived.get('type')
+                        elif place_info and place_info.get('type'):
+                            props['place_type'] = place_info.get('type')
+                        else:
+                            # fallback to dominant detected type
+                            try:
+                                props['place_type'] = dominant_dt if 'dominant_dt' in locals() else props.get('place_type')
+                            except Exception:
+                                pass
+                    # ensure dominant_type/gebiet present
+                    if not props.get('dominant_type'):
+                        props['dominant_type'] = dominant_dt if 'dominant_dt' in locals() else props.get('dominant_type')
+                    if not props.get('gebiet'):
+                        try:
+                            props['gebiet'] = _label_for_type_local(dominant_dt)
+                        except Exception:
+                            pass
+                    f['properties'] = props
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     out['features'] = out.get('features', []) + [hull_feature]
     return out
