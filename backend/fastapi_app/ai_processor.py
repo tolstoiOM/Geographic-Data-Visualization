@@ -18,6 +18,7 @@ import urllib.request
 import urllib.parse
 import ssl
 import json as _json
+import logging
 
 
 def _fetch_osm_features_for_bbox(minx, miny, maxx, maxy, timeout=60):
@@ -534,13 +535,29 @@ def _script_dominant_type_hull(geojson: Dict[str, Any]) -> Dict[str, Any]:
                     fg_shape = shape(fg)
                     if not fg_shape.within(clip_shape):
                         continue
-                    if _detect_feature_type(feat) != dominant:
+                    # include admin/district features even if they are not of the dominant type
+                    props0 = feat.get('properties') or {}
+                    def _is_admin_feature(p: Dict[str, Any]) -> bool:
+                        if not p:
+                            return False
+                        if p.get('boundary') == 'administrative':
+                            return True
+                        if 'admin_level' in p:
+                            return True
+                        if 'bezirk' in p or 'district' in p:
+                            return True
+                        return False
+
+                    # skip non-dominant, non-admin features
+                    if _detect_feature_type(feat) != dominant and not _is_admin_feature(props0):
                         continue
 
                     f = dict(feat)
                     props = dict(f.get('properties') or {})
-                    props['ai_script'] = 'dominant_type_hull'
-                    props['dominant_type'] = dominant
+                    # annotate dominant-type features; keep admin features un-annotated except for district info
+                    if _detect_feature_type(feat) == dominant:
+                        props['ai_script'] = 'dominant_type_hull'
+                        props['dominant_type'] = dominant
                     # add district info if districts layer provided
                     try:
                         dinfo = _find_district(fg_shape)
@@ -914,6 +931,39 @@ def _script_dominant_type_hull(geojson: Dict[str, Any]) -> Dict[str, Any]:
     else:
         out = {'type': 'FeatureCollection', 'features': list(features) + [hull_feature]}
 
+    # Wenn der Caller Place-Informationen erwartet (oder allgemein hilfreich),
+    # reiche das Ergebnis durch das place_enrich-Skript, aber vermeide doppelte
+    # Hull-Anhänge: wir benutzen _script_place_enrich auf einer minimalen Kopie
+    try:
+        if geojson.get('enrich_place') or geojson.get('ensure_place_fields'):
+            try:
+                enriched = _script_place_enrich({'type': 'FeatureCollection', 'features': out.get('features', [])})
+                # copy top-level place and per-feature place_name/place_type if present
+                if isinstance(enriched, dict) and enriched.get('place'):
+                    out.setdefault('place', {})
+                    out['place'].update(enriched.get('place') or {})
+                if enriched.get('features'):
+                    # merge per-feature props by geometry equality fallback to index
+                    for idx, f in enumerate(out.get('features', [])):
+                        try:
+                            e = enriched.get('features')[idx]
+                            if not e: continue
+                            props = f.get('properties') or {}
+                            eprops = e.get('properties') or {}
+                            if eprops.get('place_name') and not props.get('place_name'):
+                                props['place_name'] = eprops.get('place_name')
+                            if eprops.get('place_type') and not props.get('place_type'):
+                                props['place_type'] = eprops.get('place_type')
+                            if eprops.get('district_id') and not props.get('district_id'):
+                                props['district_id'] = eprops.get('district_id')
+                            f['properties'] = props
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     return out
 
 
@@ -1056,9 +1106,59 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             place_info = None
 
+    # debug: report result of Overpass lookup
+    try:
+        print(f"[place_enrich] after overpass lookup, place_info={place_info}")
+    except Exception:
+        pass
+
     # 3) Nominatim fallback
     if not place_info:
         place_info = _nominatim_place(hull)
+
+    # debug: report result of nominatim lookup
+    try:
+        print(f"[place_enrich] after nominatim lookup, place_info={place_info}")
+    except Exception:
+        pass
+
+    # If still missing and caller requested to ensure place fields, forcibly
+    # perform a longer Nominatim reverse and try to extract address fields.
+    if not place_info and geojson.get('ensure_place_fields'):
+        try:
+            rp = hull.representative_point() if hasattr(hull, 'representative_point') else hull.centroid
+            if rp and not rp.is_empty:
+                lat = rp.y; lon = rp.x
+                params = {'format': 'jsonv2', 'lat': str(lat), 'lon': str(lon), 'addressdetails': '1'}
+                url = 'https://nominatim.openstreetmap.org/reverse?' + urllib.parse.urlencode(params)
+                req = urllib.request.Request(url, headers={'User-Agent': 'GeoVizAI/1.0 (your-email@example.com)'})
+                ctx = ssl.create_default_context()
+                with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                    raw = resp.read().decode('utf-8')
+                    try:
+                        j = _json.loads(raw)
+                    except Exception:
+                        j = None
+                    print(f"[place_enrich] ensure_place_fields nominatim raw={raw}")
+                    if j:
+                        addr = j.get('address') or {}
+                        for key, ptype in (('neighbourhood','neighbourhood'),('suburb','suburb'),('city_district','city_district'),('borough','borough'),('village','village'),('town','town'),('city','city'),('county','county'),('state','state')):
+                            if addr.get(key):
+                                place_info = {'name': str(addr.get(key)), 'type': ptype, 'source': 'nominatim_force', 'country': addr.get('country'), 'country_code': addr.get('country_code')}
+                                break
+                        if not place_info and j.get('display_name'):
+                            place_info = {'name': str(j.get('display_name')), 'type': 'display_name', 'source': 'nominatim_force', 'country': addr.get('country'), 'country_code': addr.get('country_code')}
+        except Exception as e:
+            try:
+                print(f"[place_enrich] ensure_place_fields nominatim error: {e}")
+            except Exception:
+                pass
+
+    # debug: final place_info before attaching
+    try:
+        print(f"[place_enrich] final place_info={place_info}")
+    except Exception:
+        pass
 
     out = dict(geojson)
     out.setdefault('features', list(features))
