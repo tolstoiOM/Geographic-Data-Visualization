@@ -1170,8 +1170,12 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
         prefer_district_flag = False
     try:
         # gather derived names/types from features
+        # when prefer_district_flag is set, only consider district-like keys/types
+        district_keys = set(('district', 'bezirk', 'city_district', 'suburb', 'neighbourhood', 'borough'))
+        district_types = set(('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk'))
         derived_counts = {}
         derived_types = {}
+        derived_matched = {}
         for f in features:
             try:
                 d = _derive_place_from_props(f.get('properties') or {})
@@ -1179,9 +1183,17 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
                     continue
                 name = d.get('name')
                 t = (d.get('type') or '').lower() if isinstance(d.get('type'), str) else None
+                matched = d.get('matched_key')
+                # if prefer_district_flag, only count district-like matches
+                if prefer_district_flag:
+                    if not (matched in district_keys or (t and t in district_types)):
+                        continue
+                # otherwise, count but remember matched key/type for later filtering
                 derived_counts[name] = derived_counts.get(name, 0) + 1
                 if t:
                     derived_types[name] = t
+                if matched:
+                    derived_matched.setdefault(name, []).append(matched)
             except Exception:
                 continue
         if derived_counts:
@@ -1197,10 +1209,13 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 is_city_level = True
 
-            if most_derived_type and most_derived_type in ('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk') and (prefer_district_flag or is_city_level):
+            # also consider matched property keys that indicate district-like names
+            most_matched_keys = derived_matched.get(most_derived_name, []) if 'derived_matched' in locals() else []
+            has_district_matched = any(k in ('district', 'bezirk', 'city_district', 'suburb', 'neighbourhood', 'borough') for k in most_matched_keys)
+            if (most_derived_type and most_derived_type in ('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk') or has_district_matched) and (prefer_district_flag or is_city_level):
                 place_info = {'name': most_derived_name, 'type': 'district', 'source': 'derived_from_features_override'}
                 try:
-                    print(f"[place_enrich] overriding place_info with derived district: {place_info}")
+                    print(f"[place_enrich] overriding place_info with derived district: {place_info}, matched_keys={most_matched_keys}, derived_types={derived_types.get(most_derived_name)}")
                 except Exception:
                     pass
     except Exception:
@@ -1208,32 +1223,60 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
 
     # If we still don't have place_info, try to derive the most common
     # place name/type from the input features' properties as a last-resort.
+    # Be conservative: avoid taking single POI names (e.g. a restaurant) as the place.
     if not place_info:
         try:
             name_counts = {}
             type_counts = {}
+            matched_keys = {}
             for f in features:
                 try:
                     p = f.get('properties') or {}
                     d = _derive_place_from_props(p)
                     if d and d.get('name'):
                         n = d.get('name')
+                        t = (d.get('type') or '').lower() if isinstance(d.get('type'), str) else None
+                        mk = d.get('matched_key')
+                        # if prefer_district_flag, only accept district-like matched keys/types
+                        if prefer_district_flag:
+                            if not (mk in ('district', 'bezirk', 'city_district', 'suburb', 'neighbourhood', 'borough') or (t and t in ('district', 'city_district', 'suburb', 'neighbourhood', 'borough', 'bezirk'))):
+                                continue
                         name_counts[n] = name_counts.get(n, 0) + 1
-                        if d.get('type'):
-                            type_counts[d.get('type')] = type_counts.get(d.get('type'), 0) + 1
+                        if t:
+                            type_counts[t] = type_counts.get(t, 0) + 1
+                        if mk:
+                            matched_keys.setdefault(n, []).append(mk)
                 except Exception:
                     continue
+
             if name_counts:
                 # choose most common name and (if any) most common derived type
-                most_name = max(name_counts.items(), key=lambda kv: kv[1])[0]
+                most_name, most_count = max(name_counts.items(), key=lambda kv: kv[1])
                 most_type = None
                 if type_counts:
                     most_type = max(type_counts.items(), key=lambda kv: kv[1])[0]
-                place_info = {'name': most_name, 'type': most_type, 'source': 'derived_from_features'}
-                try:
-                    print(f"[place_enrich] derived place_info from features: {place_info}")
-                except Exception:
-                    pass
+
+                # conservative rule: if the top candidate only appears once and looks like a POI type, skip
+                poi_like = set(('amenity', 'shop', 'building', 'leisure', 'tourism', 'restaurant', 'cafe'))
+                top_is_poi = (most_type in poi_like) if most_type else False
+                if most_count >= 2 or (not top_is_poi and most_count >= 1):
+                    # avoid creating a place equal to already-known city-level place_info
+                    known_city = None
+                    try:
+                        if place_info and isinstance(place_info.get('type'), str) and place_info.get('type') in ('city', 'town'):
+                            known_city = place_info.get('name')
+                    except Exception:
+                        known_city = None
+
+                    if known_city and most_name == known_city:
+                        # skip using city-name derived from features
+                        pass
+                    else:
+                        place_info = {'name': most_name, 'type': most_type, 'source': 'derived_from_features'}
+                        try:
+                            print(f"[place_enrich] derived place_info from features: {place_info}")
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -1242,7 +1285,8 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
         if not p:
             return None
         # prefer district-like keys first, then fall back to general name keys
-        for k in ('district', 'bezirk', 'city_district', 'suburb', 'neighbourhood', 'place_name', 'place', 'name', 'label', 'display_name', 'addr:suburb', 'addr:city'):
+        keys = ('district', 'bezirk', 'city_district', 'suburb', 'neighbourhood', 'place_name', 'place', 'name', 'label', 'display_name', 'addr:suburb', 'addr:city')
+        for k in keys:
             v = p.get(k) or (p.get('tags') or {}).get(k)
             if v:
                 # try to also find a sensible type
@@ -1252,7 +1296,7 @@ def _script_place_enrich(geojson: Dict[str, Any]) -> Dict[str, Any]:
                     if tv:
                         t = str(tv)
                         break
-                return {'name': str(v), 'type': t or None, 'source': 'props'}
+                return {'name': str(v), 'type': t or None, 'matched_key': k, 'source': 'props'}
         # no suitable name found
         return None
 
