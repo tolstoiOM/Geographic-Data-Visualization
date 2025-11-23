@@ -1,8 +1,15 @@
 from fastapi import FastAPI, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
-from geo_processor import process_geojson_make_black
-from ai_processor import list_scripts as ai_list_scripts, process as ai_process
+# use package-local relative imports so uvicorn can import the module reliably
+try:
+    # when imported as a package (recommended during local dev)
+    from .geo_processor import process_geojson_make_black
+    from .ai_processor import list_scripts as ai_list_scripts, process as ai_process
+except Exception:
+    # fall back to top-level imports (works when uvicorn runs module as main)
+    from geo_processor import process_geojson_make_black  # type: ignore
+    from ai_processor import list_scripts as ai_list_scripts, process as ai_process  # type: ignore
 import os, json
 
 app = FastAPI()

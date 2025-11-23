@@ -220,6 +220,20 @@ onMounted(() => {
       // lese Datei
       const text = await file.text();
       const geojson = JSON.parse(text);
+      // mark uploaded features so we can remove the original upload polygon after AI enrichment
+      try {
+        if (geojson && geojson.type === 'FeatureCollection' && Array.isArray(geojson.features)) {
+          for (const f of geojson.features) {
+            try {
+              f.properties = f.properties || {}
+              f.properties._uploaded_from_file = true
+            } catch (e) { /* ignore */ }
+          }
+        } else if (geojson && geojson.type === 'Feature') {
+          geojson.properties = geojson.properties || {}
+          geojson.properties._uploaded_from_file = true
+        }
+      } catch (e) { /* ignore */ }
       if (!geojson.type || (geojson.type !== 'FeatureCollection' && geojson.type !== 'Feature')) {
         throw new Error('Nicht unterstützter GeoJSON-Typ');
       }
@@ -227,6 +241,8 @@ onMounted(() => {
       // optional: Verarbeitung per Backend (nur wenn bestätigt)
       const doProcess = window.confirm('GeoJSON mit dem Python‑Skript überarbeiten?');
       let processed = geojson;
+      // flag to indicate we uploaded the enriched geojson immediately after place_enrich
+      let uploadedFromPlaceEnrich = false;
       if (doProcess) {
         const url = `${import.meta.env.VITE_API_URL || ''}/upload-geojson/process?process=true`;
         const res = await fetch(url, {
@@ -240,6 +256,64 @@ onMounted(() => {
         }
         const data = await res.json();
         processed = data.geojson || geojson;
+
+        // After server-side processing, optionally run the AI 'dominant_type_hull' script
+        // and request OSM enrichment (fetch_osm). We do this automatically so the
+        // returned GeoJSON contains appended OSM data when available.
+        try {
+          const aiUrl = `${import.meta.env.VITE_API_URL || ''}/augment?script_id=dominant_type_hull`;
+          // include fetch_osm flag and optional filters (e.g., buildings/amenity)
+          const aiBody = Object.assign({}, processed, { fetch_osm: true /*, osm_filters: ['building','amenity'] */ });
+          const aiRes = await fetch(aiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(aiBody) });
+          if (aiRes && aiRes.ok) {
+            const aiData = await aiRes.json();
+            if (aiData && aiData.geojson) {
+              processed = aiData.geojson;
+            }
+          }
+        } catch (e) {
+          console.warn('AI augmentation failed or skipped:', e)
+        }
+
+        // Run the dedicated place_enrich script to augment with Bezirk/Ort/Stadt/Land
+        try {
+          const placeUrl = `${import.meta.env.VITE_API_URL || ''}/augment?script_id=place_enrich`;
+          const placeBody = Object.assign({}, processed, { fetch_osm: true });
+          const placeRes = await fetch(placeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(placeBody) });
+          if (placeRes && placeRes.ok) {
+            const placeData = await placeRes.json();
+            if (placeData && placeData.geojson) {
+              // Always replace displayed GeoJSON with the enriched result
+              const enriched = placeData.geojson;
+              processed = enriched;
+              // Still offer the enriched geojson for download to the user
+              try {
+                const want = window.confirm('Place enrichment completed. Möchtest du die ergänzte GeoJSON-Datei herunterladen?');
+                if (want) {
+                  const filename = (file.name || 'uploaded.geojson').replace(/\.geojson$/i, '') + '_place_enriched.geojson';
+                  provided.downloadGeoJSON(enriched, filename);
+                }
+              } catch (e) { /* ignore confirm errors */ }
+
+              // Ask whether to upload the enriched GeoJSON immediately (always shown)
+              try {
+                const uploadNow = window.confirm('Möchtest du die angereicherte GeoJSON jetzt hochladen?');
+                if (uploadNow) {
+                  try {
+                    await provided.saveGeoJSONToDB(enriched);
+                    uploadedFromPlaceEnrich = true;
+                    alert('Angereicherte GeoJSON wurde hochgeladen.');
+                  } catch (err) {
+                    console.error('Upload failed:', err);
+                    alert('Fehler beim Hochladen der angereicherten GeoJSON.');
+                  }
+                }
+              } catch (e) { /* ignore confirm errors */ }
+            }
+          }
+        } catch (e) {
+          console.warn('place_enrich call failed or skipped:', e)
+        }
 
         // Download nur wenn Verarbeitung ausgewählt und erfolgreich
         try {
@@ -264,8 +338,15 @@ onMounted(() => {
           try {
             const t = getFeatureType(feature);
             const props = feature.properties || {};
-            const title = props.name || props.id || (props.type || t);
-            const html = `<div><strong>${title}</strong><div>Typ: ${t}</div></div>`;
+            // Prefer the enriched place name for the popup title
+            const title = props.place_name || props.name || props.id || (props.type || t);
+            const districtName = props.district_name || props.bezirk || ''
+            const districtId = props.district_id || props.bezirk_id || ''
+            const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
+            // show the raw landuse/type first if available, then dominant_type or the german label
+            const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
+            const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}<div>Typ: ${t}</div></div>`;
             layer.bindPopup(html);
           } catch (e) { /* ignore */ }
         }
@@ -274,9 +355,16 @@ onMounted(() => {
       try { map.value.fitBounds(provided._geoJsonLayer.getBounds()) } catch (e) { /* ignore */ }
 
       // Möglichkeit, die (verarbeitete oder originale) GeoJSON in DB zu speichern (wie vorher)
-      if (window.confirm('Möchtest du diese GeoJSON-Daten in die Datenbank speichern?')) {
-        await provided.saveGeoJSONToDB(processed);
-        alert('GeoJSON-Daten wurden an das Backend gesendet.');
+      // Wenn wir bereits direkt nach place_enrich hochgeladen haben, überspringe diese Abfrage
+      try {
+        if (typeof uploadedFromPlaceEnrich === 'undefined' || !uploadedFromPlaceEnrich) {
+          if (window.confirm('Möchtest du diese GeoJSON-Daten in die Datenbank speichern?')) {
+            await provided.saveGeoJSONToDB(processed);
+            alert('GeoJSON-Daten wurden an das Backend gesendet.');
+          }
+        }
+      } catch (e) {
+        try { if (window.confirm('Möchtest du diese GeoJSON-Daten in die Datenbank speichern?')) { await provided.saveGeoJSONToDB(processed); alert('GeoJSON-Daten wurden an das Backend gesendet.'); } } catch (err) { /* ignore */ }
       }
 
     } catch (err) {
@@ -315,8 +403,14 @@ onMounted(() => {
           try {
             const t = getFeatureType(feature)
             const props = feature.properties || {}
-            const title = props.name || props.id || (props.type || t)
-            const html = `<div><strong>${title}</strong><div>Typ: ${t}</div></div>`
+              const isPlaceEnrich = props.ai_script === 'place_enrich';
+              const title = isPlaceEnrich ? 'Dieses Gebiet ist' : (props.place_name || props.name || props.id || (props.type || t));
+            const districtName = props.district_name || props.bezirk || ''
+            const districtId = props.district_id || props.bezirk_id || ''
+            const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
+            const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
+            const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}<div>Typ: ${t}</div></div>`
             layer.bindPopup(html)
           } catch (e) { /* ignore */ }
         }
@@ -438,7 +532,14 @@ onMounted(() => {
       // Split out AI features (those annotated by backend) so we can toggle them
       const allFeatures = Array.isArray(geojson.features) ? geojson.features : []
       const aiFeatures = allFeatures.filter(f => f && f.properties && f.properties.ai_script)
-      const normalFeatures = allFeatures.filter(f => !(f && f.properties && f.properties.ai_script))
+      // filter out the original uploaded polygon(s) which we marked with _uploaded_from_file
+      const normalFeatures = allFeatures.filter(f => {
+        try {
+          if (f && f.properties && f.properties.ai_script) return false
+          if (f && f.properties && f.properties._uploaded_from_file) return false
+          return true
+        } catch (e) { return true }
+      })
 
       const styleFn = function(feature) {
         const props = feature && feature.properties ? feature.properties : {}
@@ -458,14 +559,19 @@ onMounted(() => {
       provided._geoJsonLayer = L.geoJSON({ type: 'FeatureCollection', features: normalFeatures }, {
         style: styleFn,
         pointToLayer: function() { return null },
-        onEachFeature: function(feature, layer) {
+          onEachFeature: function(feature, layer) {
           try {
             const props = feature.properties || {}
-            const title = props.name || props.id || props['@id'] || getFeatureType(feature)
-            const html = `<div><strong>${title}</strong><div>${props.building ? 'building' : ''}</div></div>`
+            const title = props.place_name || props.name || props.id || props['@id'] || getFeatureType(feature)
+            const districtName = props.district_name || props.bezirk || ''
+            const districtId = props.district_id || props.bezirk_id || ''
+            const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
+            const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
+            const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}<div>${props.building ? 'building' : ''}</div></div>`
             layer.bindPopup(html)
           } catch (e) { /* ignore */ }
-        }
+          }
       }).addTo(map.value)
 
       // add AI polygon layer (highlighted style)
@@ -478,8 +584,15 @@ onMounted(() => {
           onEachFeature: function(feature, layer) {
             try {
               const props = feature.properties || {}
-              const title = props.ai_script ? props.ai_script : (props.name || getFeatureType(feature))
-              const html = `<div><strong>${title}</strong><div>${props.dominant_type ? 'dominant: '+props.dominant_type : ''}</div></div>`
+              // For place_enrich AI polygons: show a friendly header and include district and type
+              const isPlaceEnrich = props.ai_script === 'place_enrich'
+              const title = isPlaceEnrich ? 'Dieses Gebiet ist' : (props.place_name || props.name || (props.ai_script ? props.ai_script : getFeatureType(feature)))
+              const districtName = props.place_name || props.district_name || props.bezirk || ''
+              const districtId = props.district_id || props.bezirk_id || ''
+              const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
+              const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
+              const gebietHtml = gebietRaw ? `<div>Typ: ${gebietRaw}</div>` : ''
+              const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}</div>`
               layer.bindPopup(html)
             } catch (e) { /* ignore */ }
           }

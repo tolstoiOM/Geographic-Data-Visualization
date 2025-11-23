@@ -120,8 +120,38 @@ async function runAI() {
 
     const result = await augmentGeoJSON(payload, selectedScript.value)
     if (result) {
+      // If this is the place_enrich script, offer the enriched GeoJSON for download
+      if (selectedScript.value === 'place_enrich') {
+        try {
+          const want = window.confirm('Place enrichment completed. Möchtest du die ergänzte GeoJSON-Datei herunterladen?')
+          if (want) {
+            const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/geo+json' })
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(blob)
+            a.download = 'place_enriched.geojson'
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            URL.revokeObjectURL(a.href)
+          }
+        } catch (err) { console.warn('Download offer failed', err) }
+      }
+
       if (helpers && typeof helpers.showProcessedGeoJSON === 'function') {
         helpers.showProcessedGeoJSON(result)
+        // After showing the enriched GeoJSON, offer to upload it to the DB
+        try {
+          const uploadNow = window.confirm('Möchtest du die angereicherte GeoJSON jetzt hochladen?')
+          if (uploadNow && helpers && typeof helpers.saveGeoJSONToDB === 'function') {
+            try {
+              await helpers.saveGeoJSONToDB(result)
+              alert('Angereicherte GeoJSON wurde hochgeladen.')
+            } catch (err) {
+              console.error('Upload failed:', err)
+              alert('Fehler beim Hochladen der angereicherten GeoJSON.')
+            }
+          }
+        } catch (e) { /* ignore confirm errors */ }
       } else {
         const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/geo+json' })
         const a = document.createElement('a')
