@@ -1,0 +1,5 @@
+{
+    "python.defaultInterpreterPath": "/Users/markoparadzik/Documents/SoftwareEngineeringProjekt-Final/GIS-Projekt/Geographic-Data-Visualization/.venv/bin/python",
+    "python.analysis.indexing": true,
+    "python.analysis.autoSearchPaths": true
+}
