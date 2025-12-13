@@ -42,6 +42,12 @@ const COLOR_MAP = {
   unknown: '#888888'
 }
 
+function heightHtml(props) {
+  const h = props && (props.height ?? props.building_height ?? props['building:height'] ?? props['height:m'])
+  if (h === null || h === undefined || h === '') return ''
+  return `<div>Höhe: ${h} m</div>`
+}
+
 function getFeatureType(feature) {
   const p = feature.properties || {}
   if (p.amenity) {
@@ -238,24 +244,73 @@ onMounted(() => {
         throw new Error('Nicht unterstützter GeoJSON-Typ');
       }
 
+      let processed = geojson;
+
+      // Let user decide to enrich with Groq
+      const useGroq = window.confirm('Do you want to enrich the GeoJSON with AI (Groq)?');
+      if (useGroq) {
+        spinner.show();
+        try {
+          const aiUrl = `${import.meta.env.VITE_API_URL || ''}/augment?script_id=groq_enrich`;
+          console.log('[groq] starting request to', aiUrl);
+
+          const aiRes = await fetch(aiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(processed)
+          });
+
+          // Log raw response so we can see exactly what the AI returned
+          const aiText = await aiRes.text();
+          console.log('[groq] response status', aiRes.status, aiRes.statusText);
+          console.log('[groq] raw response body:', aiText);
+
+          let aiData = null;
+          try {
+            aiData = aiText ? JSON.parse(aiText) : null;
+          } catch (parseErr) {
+            console.warn('[groq] could not parse response as JSON', parseErr);
+          }
+
+          if (aiRes.ok && aiData && aiData.geojson) {
+            processed = aiData.geojson;
+            alert('GeoJSON enriched with Groq AI.');
+            
+            const wantDownload = window.confirm('Do you want to download the enriched GeoJSON file?');
+            if (wantDownload) {
+              const filename = (file.name || 'uploaded.geojson').replace(/\.geojson$/i, '') + '_groq_enriched.geojson';
+              provided.downloadGeoJSON(processed, filename);
+            }
+          } else if (aiRes.ok) {
+            alert('Groq AI enrichment responded but did not return GeoJSON. Check console for details.');
+          } else {
+            throw new Error(`Groq AI enrichment failed: ${aiText || aiRes.statusText}`);
+          }
+        } catch (e) {
+          console.error('Groq AI enrichment failed (network or other error):', e);
+          alert(`An error occurred during Groq AI enrichment: ${e.message}`);
+        } finally {
+          console.log('[groq] request finished');
+          spinner.hide();
+        }
+      }
+      
       // optional: Verarbeitung per Backend (nur wenn bestätigt)
       const doProcess = window.confirm('GeoJSON mit dem Python‑Skript überarbeiten?');
-      let processed = geojson;
-      // flag to indicate we uploaded the enriched geojson immediately after place_enrich
       let uploadedFromPlaceEnrich = false;
       if (doProcess) {
         const url = `${import.meta.env.VITE_API_URL || ''}/upload-geojson/process?process=true`;
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(geojson)
+          body: JSON.stringify(processed)
         });
         if (!res.ok) {
           const msg = await res.text();
           throw new Error(msg || 'Server-Fehler beim Verarbeiten');
         }
         const data = await res.json();
-        processed = data.geojson || geojson;
+        processed = data.geojson || processed;
 
         // After server-side processing, optionally run the AI 'dominant_type_hull' script
         // and request OSM enrichment (fetch_osm). We do this automatically so the
@@ -346,7 +401,7 @@ onMounted(() => {
             // show the raw landuse/type first if available, then dominant_type or the german label
             const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
             const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
-            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}<div>Typ: ${t}</div></div>`;
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>Typ: ${t}</div></div>`;
             layer.bindPopup(html);
           } catch (e) { /* ignore */ }
         }
@@ -410,7 +465,7 @@ onMounted(() => {
             const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
             const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
             const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
-            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}<div>Typ: ${t}</div></div>`
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>Typ: ${t}</div></div>`
             layer.bindPopup(html)
           } catch (e) { /* ignore */ }
         }
@@ -568,7 +623,7 @@ onMounted(() => {
             const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
             const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
             const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
-            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}<div>${props.building ? 'building' : ''}</div></div>`
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>${props.building ? 'building' : ''}</div></div>`
             layer.bindPopup(html)
           } catch (e) { /* ignore */ }
           }
@@ -592,7 +647,7 @@ onMounted(() => {
               const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
               const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
               const gebietHtml = gebietRaw ? `<div>Typ: ${gebietRaw}</div>` : ''
-              const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}</div>`
+              const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}</div>`
               layer.bindPopup(html)
             } catch (e) { /* ignore */ }
           }
