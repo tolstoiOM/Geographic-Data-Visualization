@@ -49,6 +49,37 @@ function heightHtml(props) {
   return `<div>Höhe: ${h} m</div>`
 }
 
+function propsHtml(props) {
+  if (!props || typeof props !== 'object') return ''
+  const skip = new Set(['geometry', 'ai_script', '_uploaded_from_file', 'height', 'building_height', 'building:height', 'height:m'])
+  const entries = Object.entries(props).filter(([k, v]) => !skip.has(k) && v !== null && v !== undefined && v !== '')
+  if (!entries.length) return ''
+  const top = entries.slice(0, 8).map(([k, v]) => `<div><strong>${k}</strong>: ${String(v)}</div>`).join('')
+  const more = entries.length > 8 ? `<div>… (${entries.length - 8} mehr)</div>` : ''
+  return `<div class="props-block">${top}${more}</div>`
+}
+
+function parseGroqJson(text) {
+  if (!text || typeof text !== 'string') return null
+  let candidate = text.trim()
+  const fence = candidate.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fence && fence[1]) candidate = fence[1].trim()
+  try {
+    const obj = JSON.parse(candidate)
+    if (obj && (obj.type === 'FeatureCollection' || obj.type === 'Feature')) return obj
+  } catch (e) { /* fall through */ }
+  try {
+    const start = candidate.indexOf('{')
+    const end = candidate.lastIndexOf('}')
+    if (start !== -1 && end !== -1 && end > start) {
+      const sliced = candidate.slice(start, end + 1)
+      const obj = JSON.parse(sliced)
+      if (obj && (obj.type === 'FeatureCollection' || obj.type === 'Feature')) return obj
+    }
+  } catch (e) { /* ignore */ }
+  return null
+}
+
 function getFeatureType(feature) {
   const p = feature.properties || {}
   if (p.amenity) {
@@ -402,7 +433,7 @@ onMounted(() => {
             // show the raw landuse/type first if available, then dominant_type or the german label
             const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
             const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
-            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>Typ: ${t}</div></div>`;
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>Typ: ${t}</div>${propsHtml(props)}</div>`;
             layer.bindPopup(html);
           } catch (e) { /* ignore */ }
         }
@@ -439,6 +470,22 @@ onMounted(() => {
       console.log('[prompt] sending prompt to AI', { promptText })
       const reply = await sendPromptToAI(promptText, payloadGeoJSON)
       console.log('[prompt] AI reply:', reply)
+      const parsed = parseGroqJson(reply)
+      if (parsed && (parsed.type === 'FeatureCollection' || parsed.type === 'Feature')) {
+        provided._lastGeoJSON = parsed
+        console.log('[prompt] parsed GeoJSON from reply:', parsed)
+        const wantShow = window.confirm('AI lieferte GeoJSON. Auf der Karte anzeigen?')
+        if (wantShow && typeof provided.showProcessedGeoJSON === 'function') {
+          provided.showProcessedGeoJSON(parsed)
+        }
+        const wantDownload = window.confirm('GeoJSON herunterladen?')
+        if (wantDownload) {
+          const filename = 'ai_prompt_enriched.geojson'
+          provided.downloadGeoJSON(parsed, filename)
+        }
+      } else {
+        console.log('[prompt] no valid GeoJSON parsed from reply')
+      }
       alert('Prompt gesendet. Antwort steht in der Konsole.')
     } catch (err) {
       console.error('Prompt send failed', err)
@@ -483,7 +530,7 @@ onMounted(() => {
             const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
             const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
             const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
-            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>Typ: ${t}</div></div>`
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>Typ: ${t}</div>${propsHtml(props)}</div>`
             layer.bindPopup(html)
           } catch (e) { /* ignore */ }
         }
@@ -641,7 +688,7 @@ onMounted(() => {
             const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
             const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
             const gebietHtml = gebietRaw ? `<div>Gebiet: ${gebietRaw}</div>` : ''
-            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>${props.building ? 'building' : ''}</div></div>`
+            const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}<div>${props.building ? 'building' : ''}</div>${propsHtml(props)}</div>`
             layer.bindPopup(html)
           } catch (e) { /* ignore */ }
           }
@@ -665,7 +712,7 @@ onMounted(() => {
               const districtHtml = districtName || districtId ? `<div>Bezirk: ${districtName || ''}${districtId ? ' ('+districtId+')' : ''}</div>` : ''
               const gebietRaw = props.landuse || props.dominant_type || props.gebiet || ''
               const gebietHtml = gebietRaw ? `<div>Typ: ${gebietRaw}</div>` : ''
-              const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}</div>`
+              const html = `<div><strong>${title}</strong>${districtHtml}${gebietHtml}${heightHtml(props)}${propsHtml(props)}</div>`
               layer.bindPopup(html)
             } catch (e) { /* ignore */ }
           }
