@@ -23,6 +23,7 @@ import MapToolbar from './MapToolbar.vue'
 import Credit from './Credit.vue'
 import { createApp } from 'vue'
 import ColorLegend from './ColorLegend.vue'
+import { sendPromptToAI } from '@/services/geojsonService'
 
 const mapContainer = ref(null)
 const map = ref(null)
@@ -429,6 +430,23 @@ onMounted(() => {
       spinner.hide();
     }
   };
+
+  provided.sendPrompt = async function(promptText) {
+    if (!promptText) return
+    try { spinner.show() } catch (e) {}
+    try {
+      const payloadGeoJSON = provided._lastGeoJSON || null
+      console.log('[prompt] sending prompt to AI', { promptText })
+      const reply = await sendPromptToAI(promptText, payloadGeoJSON)
+      console.log('[prompt] AI reply:', reply)
+      alert('Prompt gesendet. Antwort steht in der Konsole.')
+    } catch (err) {
+      console.error('Prompt send failed', err)
+      alert('Fehler beim Senden des Prompts: ' + (err.message || err))
+    } finally {
+      try { spinner.hide() } catch (e) {}
+    }
+  }
 
   // apply legend filter by rebuilding the geojson layer from provided._lastGeoJSON
   function applyLegendFilter(selectedCategories) {

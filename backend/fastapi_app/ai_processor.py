@@ -939,7 +939,7 @@ def process_with_groq(geojson: Dict[str, Any]) -> Dict[str, Any]:
         from groq import Groq
         import os
 
-        api_key = os.getenv("GROQ_API_KEY") or " "
+        api_key = os.getenv("GROQ_API_KEY") or ""
         if not api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
 
@@ -977,6 +977,39 @@ def process_with_groq(geojson: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         logging.error(f"Error processing with Groq: {e}")
+        raise
+
+
+def process_prompt_with_groq(prompt: str, geojson: Dict[str, Any] | None = None) -> str:
+    """Send a free-form prompt (optionally with GeoJSON context) to Groq and return the raw reply text."""
+    try:
+        from groq import Groq
+        import os
+
+        api_key = os.getenv("GROQ_API_KEY") or ""
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY is not set")
+
+        client = Groq(api_key=api_key)
+
+        user_content = prompt or ""
+        if geojson:
+            user_content += f"\n\nContext GeoJSON (keep private): {json.dumps(geojson)}"
+
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant. Keep replies concise."},
+                {"role": "user", "content": user_content},
+            ],
+            model="llama-3.3-70b-versatile",
+            temperature=0.2,
+            max_tokens=2048,
+        )
+
+        return chat_completion.choices[0].message.content
+
+    except Exception as e:
+        logging.error(f"Error processing prompt with Groq: {e}")
         raise
 
 

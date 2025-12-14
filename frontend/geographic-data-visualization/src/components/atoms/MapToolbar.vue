@@ -20,6 +20,12 @@
         </select>
         <button @click="runAI" :disabled="!selectedScript" class="px-3 py-2 bg-indigo-600 text-white rounded">AI ausführen</button>
       </div>
+
+      <!-- Free-form prompt to Groq -->
+      <div class="flex items-center gap-2">
+        <input v-model="promptText" placeholder="Prompt an Groq..." class="px-2 py-1 border rounded w-48" />
+        <button @click="sendPrompt" :disabled="!promptText" class="px-3 py-2 bg-amber-600 text-white rounded">Prompt senden</button>
+      </div>
   </div>
 </template>
 
@@ -30,6 +36,7 @@ const helpers = inject('helpers', null)
 const q = ref('')
 const scripts = ref([])
 const selectedScript = ref('')
+const promptText = ref('')
 function onSearch() { if (q.value && helpers && typeof helpers.handleSearch === 'function') helpers.handleSearch(q.value) }
 function onUpload(e) { const f = e.target.files && e.target.files[0]; if (f && helpers && typeof helpers.handleUpload === 'function') helpers.handleUpload(f) }
 function onLocate() { if (helpers && typeof helpers.handleLocate === 'function') helpers.handleLocate() }
@@ -167,6 +174,17 @@ async function runAI() {
   } catch (err) {
     console.error('AI run failed', err)
     alert('Fehler beim Ausführen des AI-Skripts: ' + (err.message || err))
+  }
+}
+
+async function sendPrompt() {
+  if (!promptText.value) { alert('Bitte einen Prompt eingeben'); return }
+  if (!helpers || typeof helpers.sendPrompt !== 'function') { alert('Prompt-Senden ist derzeit nicht verfügbar.'); return }
+  try {
+    await helpers.sendPrompt(promptText.value)
+  } catch (err) {
+    console.error('Prompt send failed', err)
+    alert('Fehler beim Senden des Prompts: ' + (err.message || err))
   }
 }
 </script>

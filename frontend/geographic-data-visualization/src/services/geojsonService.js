@@ -54,3 +54,16 @@ export async function fetchProcessedGeoJSON() {
   if (!isValidGeoJSON(data)) throw new Error('Invalid GeoJSON received')
   return data
 }
+
+export async function sendPromptToAI(prompt, geojson) {
+  if (!prompt) throw new Error('prompt is required')
+  const url = `${API_BASE}/ai/prompt`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, geojson })
+  })
+  if (!res.ok) return handleResponseError(res)
+  const data = await res.json()
+  return data && data.reply ? data.reply : ''
+}

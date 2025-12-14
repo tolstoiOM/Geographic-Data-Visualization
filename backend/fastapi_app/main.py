@@ -5,11 +5,11 @@ from sqlalchemy import create_engine, text
 try:
     # when imported as a package (recommended during local dev)
     from .geo_processor import process_geojson_make_black
-    from .ai_processor import list_scripts as ai_list_scripts, process as ai_process
+    from .ai_processor import list_scripts as ai_list_scripts, process as ai_process, process_prompt_with_groq
 except Exception:
     # fall back to top-level imports (works when uvicorn runs module as main)
     from geo_processor import process_geojson_make_black  # type: ignore
-    from ai_processor import list_scripts as ai_list_scripts, process as ai_process  # type: ignore
+    from ai_processor import list_scripts as ai_list_scripts, process as ai_process, process_prompt_with_groq  # type: ignore
 import os, json
 
 app = FastAPI()
@@ -55,6 +55,24 @@ async def augment_geojson(script_id: str = Query(..., description='ID des AI-Skr
     except Exception as e:
         import traceback
         print('❌ AI processing error:', traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post('/ai/prompt')
+async def ai_prompt(body: dict = Body(...)):
+    """Send a free-form prompt (optionally with GeoJSON context) to Groq and return the reply text."""
+    try:
+        prompt = body.get('prompt') if isinstance(body, dict) else None
+        geojson = body.get('geojson') if isinstance(body, dict) else None
+        if not prompt or not isinstance(prompt, str):
+            raise HTTPException(status_code=400, detail='prompt is required')
+        reply = process_prompt_with_groq(prompt, geojson if isinstance(geojson, dict) else None)
+        return {"status": "success", "reply": reply}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print('❌ AI prompt error:', traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload-geojson")
