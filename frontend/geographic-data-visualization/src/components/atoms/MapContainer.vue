@@ -1,12 +1,18 @@
 <template>
   <div class="relative w-full h-screen">
-      <div ref="mapContainer" class="w-full h-full relative">
-  <SpinnerComp :visible="spinner.isVisible.value" />
-      </div>
+    <div ref="mapContainer" class="w-full h-full relative">
+      <SpinnerComp :visible="spinner.isVisible.value" />
+    </div>
     <!-- DrawControls does not render DOM into the map pane; keep it as a child so it can access mapRef -->
     <DrawControls />
     <!-- Toolbar is rendered outside the raw Leaflet map container to avoid DOM interference -->
     <MapToolbar />
+    <!-- Floating chat window anchored over the map -->
+    <div class="pointer-events-none" style="position:fixed; bottom:16px; right:16px; z-index:9999;">
+      <div class="pointer-events-auto">
+        <ChatWindow />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -20,6 +26,7 @@ import SpinnerComp from './Spinner.vue'
 import { useSpinner } from '../../composables/useSpinner'
 import DrawControls from './DrawControls.vue'
 import MapToolbar from './MapToolbar.vue'
+import ChatWindow from './ChatWindow.vue'
 import Credit from './Credit.vue'
 import { createApp } from 'vue'
 import ColorLegend from './ColorLegend.vue'
