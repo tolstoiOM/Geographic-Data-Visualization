@@ -1,6 +1,6 @@
 <template>
-  <div class="chat-card">
-    <div class="chat-header">
+  <div class="chat-card" :style="cardStyle">
+    <div class="chat-header drag-handle" @pointerdown="startDrag">
       <div class="chat-title">AI Chat</div>
       <button class="icon-btn" type="button" @click="isOpen = !isOpen">
         <span v-if="isOpen">–</span>
@@ -43,7 +43,7 @@
 </template>
 
 <script setup>
-import { inject, nextTick, ref } from 'vue'
+import { inject, nextTick, ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { sendPromptToAI } from '@/services/geojsonService'
 
 const helpers = inject('helpers', null)
@@ -57,6 +57,47 @@ const fileInput = ref(null)
 const uploadStatus = ref('')
 const uploadedGeojson = ref(null)
 const latestGeojson = ref(null)
+const pos = ref({ x: 16, y: 16 })
+const size = ref({ w: 320, h: 420 })
+const dragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+
+const cardStyle = computed(() => ({
+  position: 'fixed',
+  right: 'auto',
+  bottom: 'auto',
+  left: pos.value.x + 'px',
+  top: pos.value.y + 'px',
+  width: size.value.w + 'px',
+  height: size.value.h + 'px'
+}))
+
+function clamp(val, min, max) {
+  return Math.min(Math.max(val, min), max)
+}
+
+function startDrag(e) {
+  if (e.button !== 0) return
+  dragging.value = true
+  dragOffset.value = { x: e.clientX - pos.value.x, y: e.clientY - pos.value.y }
+  try { window.addEventListener('pointermove', onDrag) } catch (err) {}
+  try { window.addEventListener('pointerup', stopDrag, { once: true }) } catch (err) {}
+}
+
+function onDrag(e) {
+  if (!dragging.value) return
+  const maxX = window.innerWidth - 120
+  const maxY = window.innerHeight - 80
+  pos.value = {
+    x: clamp(e.clientX - dragOffset.value.x, 8, maxX),
+    y: clamp(e.clientY - dragOffset.value.y, 8, maxY)
+  }
+}
+
+function stopDrag() {
+  dragging.value = false
+  try { window.removeEventListener('pointermove', onDrag) } catch (err) {}
+}
 
 const scrollToBottom = () => {
   try {
@@ -135,30 +176,48 @@ const downloadGeo = () => {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+onBeforeUnmount(() => {
+  try { window.removeEventListener('pointermove', onDrag) } catch (err) {}
+})
+
+onMounted(() => {
+  try {
+    const padding = 16
+    const w = size.value.w
+    const h = size.value.h
+    pos.value = {
+      x: Math.max(padding, window.innerWidth - w - padding),
+      y: Math.max(padding, window.innerHeight - h - padding)
+    }
+  } catch (err) { /* ignore */ }
+})
 </script>
 
 <style scoped>
-.chat-card { width: 320px; max-width: 90vw; background: rgba(15, 23, 42, 0.92); color: #e2e8f0; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,0.35); backdrop-filter: blur(12px); overflow: hidden; }
-.chat-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(148,163,184,0.08)); }
-.chat-title { font-weight: 700; letter-spacing: 0.02em; color: #f8fafc; }
-.icon-btn { width: 28px; height: 28px; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; background: rgba(255,255,255,0.12); color: #e2e8f0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: transform 0.15s ease, background 0.15s ease; }
-.icon-btn:hover { background: rgba(255,255,255,0.18); transform: translateY(-1px); }
-.chat-body { padding: 10px 12px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
-.chat-actions { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cbd5e1; }
-.ghost-btn { padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: #e2e8f0; cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; }
-.ghost-btn:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
-.upload-status { opacity: 0.75; }
-.chat-messages { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
-.chat-bubble { padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); box-shadow: 0 8px 20px rgba(0,0,0,0.25); }
-.bubble-you { align-self: flex-end; background: linear-gradient(135deg, #38bdf8, #6366f1); color: #0b1021; border-color: rgba(255,255,255,0.25); }
+.chat-card { max-width: 90vw; max-height: 90vh; min-width: 260px; min-height: 260px; background: var(--glass); color: var(--text); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: var(--shadow); backdrop-filter: blur(12px); overflow: hidden; resize: both; }
+.chat-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(148,163,184,0.08)); }
+.drag-handle { cursor: move; user-select: none; touch-action: none; }
+.chat-title { font-weight: 700; letter-spacing: 0.02em; color: var(--text); }
+.icon-btn { width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: transform 0.15s ease, background 0.15s ease; }
+.icon-btn:hover { background: var(--control-hover); transform: translateY(-1px); }
+.chat-body { padding: 10px 12px 12px 12px; display: flex; flex-direction: column; gap: 10px; height: calc(100% - 44px); }
+.chat-actions { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.ghost-btn { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; transition: background 0.15s ease, transform 0.15s ease; }
+.ghost-btn:hover { background: var(--control-hover); transform: translateY(-1px); }
+.upload-status { opacity: 0.8; }
+.chat-messages { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.chat-bubble { padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+.bubble-you { align-self: flex-end; background: linear-gradient(135deg, var(--accent), #6366f1); color: #ffffff; border-color: transparent; }
 .bubble-ai { align-self: flex-start; }
 .bubble-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.75; margin-bottom: 4px; }
 .bubble-text { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.4; }
 .chat-input { display: flex; gap: 8px; align-items: center; }
-.chat-input input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color: #e2e8f0; outline: none; transition: border 0.15s ease, background 0.15s ease; }
-.chat-input input:focus { border-color: #38bdf8; background: rgba(255,255,255,0.1); }
-.chat-input button { padding: 10px 14px; border-radius: 10px; border: none; background: linear-gradient(135deg, #22d3ee, #3b82f6); color: #0f172a; font-weight: 700; cursor: pointer; min-width: 90px; box-shadow: 0 10px 25px rgba(56,189,248,0.3); transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.chat-input input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--input-bg); color: var(--input-text); outline: none; transition: border 0.15s ease, background 0.15s ease; }
+.chat-input input::placeholder { color: var(--input-placeholder); }
+.chat-input input:focus { border-color: var(--accent); background: var(--surface); }
+.chat-input button { padding: 10px 14px; border-radius: 10px; border: none; background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: #0f172a; font-weight: 700; cursor: pointer; min-width: 90px; box-shadow: 0 10px 25px rgba(34,197,94,0.25); transition: transform 0.15s ease, box-shadow 0.15s ease; }
 .chat-input button:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
-.chat-input button:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(59,130,246,0.35); }
-.error-text { color: #fecdd3; font-size: 13px; border: 1px solid rgba(248,113,113,0.3); background: rgba(248,113,113,0.08); padding: 8px 10px; border-radius: 10px; }
+.chat-input button:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(59,130,246,0.3); }
+.error-text { color: #ef4444; font-size: 13px; border: 1px solid rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); padding: 8px 10px; border-radius: 10px; }
 </style>

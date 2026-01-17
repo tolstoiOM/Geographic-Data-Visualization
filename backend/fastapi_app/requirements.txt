@@ -6,3 +6,5 @@ geopandas
 python-multipart
 shapely
 google-genai
+pytest
+httpx

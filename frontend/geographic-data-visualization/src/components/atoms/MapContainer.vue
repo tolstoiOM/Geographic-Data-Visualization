@@ -738,7 +738,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.custom-credit { font-size: 12px; padding: 6px; background: rgba(255,255,255,0.9); border-radius: 4px }
-.leaflet-draw-fallback { display:flex; align-items:center; justify-content:center; width:34px; height:34px; background:white; border:1px solid rgba(0,0,0,0.15); border-radius:3px }
-.leaflet-draw-fallback:hover { background:#f3f4f6 }
+.custom-credit { font-size: 12px; padding: 6px; background: var(--glass); border: 1px solid var(--glass-border); border-radius: 999px; box-shadow: var(--shadow); color: var(--text); backdrop-filter: blur(10px) }
+.leaflet-draw-fallback { display:flex; align-items:center; justify-content:center; width:34px; height:34px; background:var(--surface); border:1px solid var(--border); border-radius:8px; color: var(--text); box-shadow: var(--shadow) }
+.leaflet-draw-fallback:hover { background:var(--surface-2) }
 </style>

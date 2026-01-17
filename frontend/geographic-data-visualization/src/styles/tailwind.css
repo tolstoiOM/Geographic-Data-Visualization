@@ -1,6 +1,57 @@
 @import "tailwindcss/preflight";  /* replaces @tailwind base */
 @import "tailwindcss/utilities";  /* replaces both @tailwind components + utilities */
 
+:root {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #4f46e5;
+  --accent-2: #22c55e;
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  --glass: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(148, 163, 184, 0.35);
+  --input-bg: #ffffff;
+  --input-text: #0f172a;
+  --input-placeholder: #94a3b8;
+  --control-bg: rgba(255, 255, 255, 0.9);
+  --control-hover: #f1f5f9;
+}
+
+[data-theme="dark"] {
+  --bg: #0b1220;
+  --surface: #0f172a;
+  --surface-2: #111827;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --border: rgba(148, 163, 184, 0.25);
+  --accent: #60a5fa;
+  --accent-2: #34d399;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --glass: rgba(15, 23, 42, 0.75);
+  --glass-border: rgba(148, 163, 184, 0.25);
+  --input-bg: rgba(15, 23, 42, 0.9);
+  --input-text: #e2e8f0;
+  --input-placeholder: #64748b;
+  --control-bg: rgba(15, 23, 42, 0.9);
+  --control-hover: rgba(30, 41, 59, 0.9);
+}
+
+html, body, #app { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+a { color: var(--accent); }
+
+input, button, select, textarea { font: inherit; }
+
 /* eigene Anpassungen */
 #map {
   height: 100vh;

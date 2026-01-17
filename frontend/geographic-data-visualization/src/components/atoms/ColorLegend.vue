@@ -86,11 +86,12 @@ onMounted(() => { emitSelection(); onToggleAIPolygon() })
 </script>
 
 <style scoped>
-.color-legend { font-size: 12px; background: rgba(255,255,255,0.95); padding: 8px; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.08) }
-.legend-title { font-weight: 600; margin-bottom: 6px }
+.color-legend { font-size: 12px; background: var(--glass); padding: 10px; border-radius: 10px; border: 1px solid var(--glass-border); box-shadow: var(--shadow); backdrop-filter: blur(10px); color: var(--text) }
+.legend-title { font-weight: 700; margin-bottom: 6px; letter-spacing: 0.02em }
 .color-legend ul { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow:auto }
-.color-legend li { display:flex; align-items:center; gap:8px; margin:4px 0 }
-.swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.08) }
-.label { color: #111827 }
-.btn-small { background:#f3f4f6; border:1px solid rgba(0,0,0,0.06); padding:4px 8px; border-radius:4px; font-size:11px }
+.color-legend li { display:flex; align-items:center; gap:8px; margin:6px 0 }
+.swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border) }
+.label { color: var(--text) }
+.btn-small { background: var(--surface-2); border:1px solid var(--border); padding:4px 10px; border-radius:8px; font-size:11px; color: var(--text); font-weight:600; transition: background .15s ease, transform .15s ease }
+.btn-small:hover { background: var(--control-hover); transform: translateY(-1px) }
 </style>

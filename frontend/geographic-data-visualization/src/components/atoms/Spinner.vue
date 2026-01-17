@@ -24,8 +24,8 @@ const loaderStyle = computed(() => ({
 </script>
 
 <style scoped>
-.spinner-overlay { background: rgba(255,255,255,0.15); }
-.loader { border: 6px solid rgba(243,243,243,1); border-top: 6px solid #34db82; border-radius: 50%; animation: spin 1s linear infinite; pointer-events: auto; }
+.spinner-overlay { background: color-mix(in srgb, var(--bg) 65%, transparent); backdrop-filter: blur(2px); }
+.loader { border: 6px solid color-mix(in srgb, var(--border) 60%, transparent); border-top: 6px solid var(--accent-2); border-radius: 50%; animation: spin 1s linear infinite; pointer-events: auto; }
 .sr-only { position: absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0 }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
