@@ -5,4 +5,4 @@ psycopg2-binary
 geopandas
 python-multipart
 shapely
-groq
+google-genai

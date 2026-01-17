@@ -21,9 +21,9 @@
         <button @click="runAI" :disabled="!selectedScript" class="px-3 py-2 bg-indigo-600 text-white rounded">AI ausführen</button>
       </div>
 
-      <!-- Free-form prompt to Groq -->
+      <!-- Free-form prompt to Gemini -->
       <div class="flex items-center gap-2">
-        <input v-model="promptText" placeholder="Prompt an Groq..." class="px-2 py-1 border rounded w-48" />
+        <input v-model="promptText" placeholder="Prompt an Gemini..." class="px-2 py-1 border rounded w-48" />
         <button @click="sendPrompt" :disabled="!promptText" class="px-3 py-2 bg-amber-600 text-white rounded">Prompt senden</button>
       </div>
   </div>

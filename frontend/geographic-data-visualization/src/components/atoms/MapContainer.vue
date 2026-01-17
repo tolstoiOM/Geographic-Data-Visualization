@@ -61,12 +61,11 @@ function propsHtml(props) {
   const skip = new Set(['geometry', 'ai_script', '_uploaded_from_file', 'height', 'building_height', 'building:height', 'height:m'])
   const entries = Object.entries(props).filter(([k, v]) => !skip.has(k) && v !== null && v !== undefined && v !== '')
   if (!entries.length) return ''
-  const top = entries.slice(0, 8).map(([k, v]) => `<div><strong>${k}</strong>: ${String(v)}</div>`).join('')
-  const more = entries.length > 8 ? `<div>… (${entries.length - 8} mehr)</div>` : ''
-  return `<div class="props-block">${top}${more}</div>`
+  const all = entries.map(([k, v]) => `<div><strong>${k}</strong>: ${String(v)}</div>`).join('')
+  return `<div class="props-block">${all}</div>`
 }
 
-function parseGroqJson(text) {
+function parseGeminiJson(text) {
   if (!text || typeof text !== 'string') return null
   let candidate = text.trim()
   const fence = candidate.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -285,13 +284,13 @@ onMounted(() => {
 
       let processed = geojson;
 
-      // Let user decide to enrich with Groq
-      const useGroq = window.confirm('Do you want to enrich the GeoJSON with AI (Groq)?');
-      if (useGroq) {
+      // Let user decide to enrich with Gemini
+      const useGemini = window.confirm('Do you want to enrich the GeoJSON with AI (Gemini)?');
+      if (useGemini) {
         spinner.show();
         try {
-          const aiUrl = `${import.meta.env.VITE_API_URL || ''}/augment?script_id=groq_enrich`;
-          console.log('[groq] starting request to', aiUrl);
+          const aiUrl = `${import.meta.env.VITE_API_URL || ''}/augment?script_id=gemini_enrich`;
+          console.log('[gemini] starting request to', aiUrl);
 
           const aiRes = await fetch(aiUrl, {
             method: 'POST',
@@ -301,35 +300,35 @@ onMounted(() => {
 
           // Log raw response so we can see exactly what the AI returned
           const aiText = await aiRes.text();
-          console.log('[groq] response status', aiRes.status, aiRes.statusText);
-          console.log('[groq] raw response body:', aiText);
+          console.log('[gemini] response status', aiRes.status, aiRes.statusText);
+          console.log('[gemini] raw response body:', aiText);
 
           let aiData = null;
           try {
             aiData = aiText ? JSON.parse(aiText) : null;
           } catch (parseErr) {
-            console.warn('[groq] could not parse response as JSON', parseErr);
+            console.warn('[gemini] could not parse response as JSON', parseErr);
           }
 
           if (aiRes.ok && aiData && aiData.geojson) {
             processed = aiData.geojson;
-            alert('GeoJSON enriched with Groq AI.');
+            alert('GeoJSON enriched with Gemini AI.');
             
             const wantDownload = window.confirm('Do you want to download the enriched GeoJSON file?');
             if (wantDownload) {
-              const filename = (file.name || 'uploaded.geojson').replace(/\.geojson$/i, '') + '_groq_enriched.geojson';
+              const filename = (file.name || 'uploaded.geojson').replace(/\.geojson$/i, '') + '_gemini_enriched.geojson';
               provided.downloadGeoJSON(processed, filename);
             }
           } else if (aiRes.ok) {
-            alert('Groq AI enrichment responded but did not return GeoJSON. Check console for details.');
+            alert('Gemini AI enrichment responded but did not return GeoJSON. Check console for details.');
           } else {
-            throw new Error(`Groq AI enrichment failed: ${aiText || aiRes.statusText}`);
+            throw new Error(`Gemini AI enrichment failed: ${aiText || aiRes.statusText}`);
           }
         } catch (e) {
-          console.error('Groq AI enrichment failed (network or other error):', e);
-          alert(`An error occurred during Groq AI enrichment: ${e.message}`);
+          console.error('Gemini AI enrichment failed (network or other error):', e);
+          alert(`An error occurred during Gemini AI enrichment: ${e.message}`);
         } finally {
-          console.log('[groq] request finished');
+          console.log('[gemini] request finished');
           spinner.hide();
         }
       }
@@ -477,7 +476,7 @@ onMounted(() => {
       console.log('[prompt] sending prompt to AI', { promptText })
       const reply = await sendPromptToAI(promptText, payloadGeoJSON)
       console.log('[prompt] AI reply:', reply)
-      const parsed = parseGroqJson(reply)
+      const parsed = parseGeminiJson(reply)
       if (parsed && (parsed.type === 'FeatureCollection' || parsed.type === 'Feature')) {
         provided._lastGeoJSON = parsed
         console.log('[prompt] parsed GeoJSON from reply:', parsed)

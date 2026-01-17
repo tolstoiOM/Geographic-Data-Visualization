@@ -12,6 +12,8 @@ Diese Module dienen als Prototyp / Platzhalter für spätere echte ML-Modelle.
 """
 from typing import Dict, Any, List
 import json
+import os
+from google import genai
 from shapely.geometry import shape, mapping, GeometryCollection
 from shapely.ops import unary_union
 import urllib.request
@@ -72,7 +74,7 @@ def list_scripts() -> List[Dict[str, str]]:
         {"id": "add_property", "name": "Add Property", "description": "Fügt property 'ai_note' zu allen Features hinzu"},
         {"id": "dominant_type_hull", "name": "Dominant Type Hull", "description": "Bestimmt den häufigsten Typ (z.B. residential) und fügt seine konvexe Hülle als Polygon-Feature hinzu"},
         {"id": "place_enrich", "name": "Place Enrich", "description": "Ergänzt GeoJSON um Bezirk/Ort/Stadt/Land aus OpenStreetMap (Overpass/Nominatim)"},
-        {"id": "groq_enrich", "name": "Groq Enrich", "description": "Enriches GeoJSON with data from Groq AI"}
+        {"id": "gemini_enrich", "name": "Gemini Enrich", "description": "Enriches GeoJSON with data from Google Gemini"}
     ]
 
 
@@ -87,8 +89,8 @@ def process(geojson: Dict[str, Any], script_id: str) -> Dict[str, Any]:
         return _script_add_centroids(geojson)
     if script_id == "add_property":
         return _script_add_property(geojson)
-    if script_id == "groq_enrich":
-        return process_with_groq(geojson)
+    if script_id == "gemini_enrich":
+        return process_with_gemini(geojson)
     if script_id == "dominant_type_hull":
         out = _script_dominant_type_hull(geojson)
         # post-processing: if caller requested OSM fetch, do it here (use hull bbox)
@@ -902,25 +904,26 @@ def _script_dominant_type_hull(geojson: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _extract_json_from_response(response_content: str) -> Dict[str, Any]:
-    """Parse JSON/GeoJSON from a Groq response string. Raises ValueError on failure."""
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or ""
+GEMINI_MODEL = "gemini-3-flash-preview"
+
+
+def _extract_json_from_model_response(response_content: str) -> Dict[str, Any]:
+    """Parse JSON/GeoJSON from a model response string. Raises ValueError on failure."""
     if response_content is None:
-        raise ValueError("Empty Groq response")
+        raise ValueError("Empty model response")
 
     text = response_content.strip()
 
-    # Prefer a fenced code block (```json ... ```)
     fence_match = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL)
     if fence_match:
         text = fence_match.group(1).strip()
 
-    # Try direct JSON first
     try:
         return json.loads(text)
     except Exception:
         pass
 
-    # Fallback: extract from first '{' to last '}'
     start = text.find('{')
     end = text.rfind('}')
     if start != -1 and end != -1 and end > start:
@@ -928,88 +931,65 @@ def _extract_json_from_response(response_content: str) -> Dict[str, Any]:
         try:
             return json.loads(snippet)
         except Exception:
-            raise ValueError("Could not parse GeoJSON from Groq response.")
+            raise ValueError("Could not parse GeoJSON from model response.")
 
-    raise ValueError("No GeoJSON object found in Groq response.")
+    raise ValueError("No GeoJSON object found in model response.")
 
 
-def process_with_groq(geojson: Dict[str, Any]) -> Dict[str, Any]:
-    """Processes a GeoJSON object using the Groq AI model to add building heights and other information."""
+def _get_gemini_client() -> genai.Client:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    return genai.Client(api_key=GEMINI_API_KEY)
+
+
+def process_with_gemini(geojson: Dict[str, Any]) -> Dict[str, Any]:
+    """Processes a GeoJSON object using Google Gemini and returns augmented GeoJSON."""
     try:
-        from groq import Groq
-        import os
-
-        api_key = os.getenv("GROQ_API_KEY") or ""
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY is not set")
-
-        client = Groq(api_key=api_key)
-
-        system_prompt = (
-            "You are a strict GeoJSON transformer. "
-            "Return ONLY a valid GeoJSON object (FeatureCollection or Feature). "
-            "Do not include markdown, explanations, or code fences."
-        )
+        client = _get_gemini_client()
 
         content = (
-            "Update the provided GeoJSON by adding realistic building height estimates (meters) "
-            "and any useful descriptive properties. Return strictly valid JSON without markdown. "
+            "You are a strict GeoJSON transformer. "
+            "Return ONLY a valid GeoJSON object (FeatureCollection or Feature) without markdown. "
+            "Augment the input by adding realistic building height estimates in meters and helpful descriptive properties. "
             f"Input GeoJSON: {json.dumps(geojson)}"
         )
 
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ],
-            model="llama-3.3-70b-versatile",
-            temperature=0.1,
-            max_tokens=4096,
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=content,
         )
 
-        response_content = chat_completion.choices[0].message.content
-        updated_geojson = _extract_json_from_response(response_content)
+        response_content = getattr(response, "text", None) or str(response)
+        updated_geojson = _extract_json_from_model_response(response_content)
 
         if not isinstance(updated_geojson, dict) or updated_geojson.get("type") not in ("FeatureCollection", "Feature"):
-            raise ValueError("Groq response is not valid GeoJSON.")
+            raise ValueError("Gemini response is not valid GeoJSON.")
 
         return updated_geojson
 
     except Exception as e:
-        logging.error(f"Error processing with Groq: {e}")
+        logging.error(f"Error processing with Gemini: {e}")
         raise
 
 
-def process_prompt_with_groq(prompt: str, geojson: Dict[str, Any] | None = None) -> str:
-    """Send a free-form prompt (optionally with GeoJSON context) to Groq and return the raw reply text."""
+def process_prompt_with_gemini(prompt: str, geojson: Dict[str, Any] | None = None) -> str:
+    """Send a free-form prompt (optionally with GeoJSON context) to Gemini and return the reply text."""
     try:
-        from groq import Groq
-        import os
-
-        api_key = os.getenv("GROQ_API_KEY") or ""
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY is not set")
-
-        client = Groq(api_key=api_key)
+        client = _get_gemini_client()
 
         user_content = prompt or ""
         if geojson:
             user_content += f"\n\nContext GeoJSON (keep private): {json.dumps(geojson)}"
 
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Keep replies concise."},
-                {"role": "user", "content": user_content},
-            ],
-            model="llama-3.3-70b-versatile",
-            temperature=0.2,
-            max_tokens=2048,
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_content,
         )
 
-        return chat_completion.choices[0].message.content
+        return getattr(response, "text", None) or str(response)
 
     except Exception as e:
-        logging.error(f"Error processing prompt with Groq: {e}")
+        logging.error(f"Error processing prompt with Gemini: {e}")
         raise
 
 
